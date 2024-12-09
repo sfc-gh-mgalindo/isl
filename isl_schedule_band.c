@@ -11,8 +11,6 @@
  */
 
 #include <string.h>
-#include <isl/val.h>
-#include <isl/space.h>
 #include <isl/map.h>
 #include <isl/schedule_node.h>
 #include <isl_schedule_band.h>
@@ -48,21 +46,19 @@ static __isl_give isl_schedule_band *isl_schedule_band_alloc(isl_ctx *ctx)
 __isl_give isl_schedule_band *isl_schedule_band_from_multi_union_pw_aff(
 	__isl_take isl_multi_union_pw_aff *mupa)
 {
-	isl_size dim;
 	isl_ctx *ctx;
 	isl_schedule_band *band;
 	isl_space *space;
 
 	mupa = isl_multi_union_pw_aff_floor(mupa);
-	dim = isl_multi_union_pw_aff_size(mupa);
-	if (dim < 0)
-		goto error;
+	if (!mupa)
+		return NULL;
 	ctx = isl_multi_union_pw_aff_get_ctx(mupa);
 	band = isl_schedule_band_alloc(ctx);
 	if (!band)
 		goto error;
 
-	band->n = dim;
+	band->n = isl_multi_union_pw_aff_dim(mupa, isl_dim_set);
 	band->coincident = isl_calloc_array(ctx, int, band->n);
 	band->mupa = mupa;
 	space = isl_space_params_alloc(ctx, 0);
@@ -223,9 +219,9 @@ isl_bool isl_schedule_band_plain_is_equal(__isl_keep isl_schedule_band *band1,
 
 /* Return the number of scheduling dimensions in the band.
  */
-isl_size isl_schedule_band_n_member(__isl_keep isl_schedule_band *band)
+int isl_schedule_band_n_member(__isl_keep isl_schedule_band *band)
 {
-	return band ? band->n : isl_size_error;
+	return band ? band->n : 0;
 }
 
 /* Is the given scheduling dimension coincident within the band and
@@ -241,7 +237,7 @@ isl_bool isl_schedule_band_member_get_coincident(
 		isl_die(isl_schedule_band_get_ctx(band), isl_error_invalid,
 			"invalid member position", return isl_bool_error);
 
-	return isl_bool_ok(band->coincident[pos]);
+	return band->coincident[pos];
 }
 
 /* Mark the given scheduling dimension as being coincident or not
@@ -261,7 +257,7 @@ __isl_give isl_schedule_band *isl_schedule_band_member_set_coincident(
 	if (pos < 0 || pos >= band->n)
 		isl_die(isl_schedule_band_get_ctx(band), isl_error_invalid,
 			"invalid member position",
-			return isl_schedule_band_free(band));
+			isl_schedule_band_free(band));
 
 	band->coincident[pos] = coincident;
 
@@ -274,7 +270,7 @@ isl_bool isl_schedule_band_get_permutable(__isl_keep isl_schedule_band *band)
 {
 	if (!band)
 		return isl_bool_error;
-	return isl_bool_ok(band->permutable);
+	return band->permutable;
 }
 
 /* Mark the schedule band permutable or not according to "permutable"?
@@ -373,7 +369,7 @@ enum isl_ast_loop_type isl_schedule_band_member_get_ast_loop_type(
 
 	if (pos < 0 || pos >= band->n)
 		isl_die(isl_schedule_band_get_ctx(band), isl_error_invalid,
-			"invalid member position", return isl_ast_loop_error);
+			"invalid member position", return -1);
 
 	if (!band->loop_type)
 		return isl_ast_loop_default;
@@ -396,7 +392,7 @@ __isl_give isl_schedule_band *isl_schedule_band_member_set_ast_loop_type(
 	if (pos < 0 || pos >= band->n)
 		isl_die(isl_schedule_band_get_ctx(band), isl_error_invalid,
 			"invalid member position",
-			return isl_schedule_band_free(band));
+			isl_schedule_band_free(band));
 
 	band = isl_schedule_band_cow(band);
 	if (!band)
@@ -428,7 +424,7 @@ enum isl_ast_loop_type isl_schedule_band_member_get_isolate_ast_loop_type(
 
 	if (pos < 0 || pos >= band->n)
 		isl_die(isl_schedule_band_get_ctx(band), isl_error_invalid,
-			"invalid member position", return isl_ast_loop_error);
+			"invalid member position", return -1);
 
 	if (!band->isolate_loop_type)
 		return isl_ast_loop_default;
@@ -454,7 +450,7 @@ isl_schedule_band_member_set_isolate_ast_loop_type(
 	if (pos < 0 || pos >= band->n)
 		isl_die(isl_schedule_band_get_ctx(band), isl_error_invalid,
 			"invalid member position",
-			return isl_schedule_band_free(band));
+			isl_schedule_band_free(band));
 
 	band = isl_schedule_band_cow(band);
 	if (!band)
@@ -527,12 +523,14 @@ static __isl_give isl_union_set *add_loop_types(
 	int isolate)
 {
 	int i;
+	isl_ctx *ctx;
 
 	if (!type)
 		return options;
 	if (!options)
 		return NULL;
 
+	ctx = isl_union_set_get_ctx(options);
 	for (i = 0; i < n; ++i) {
 		int first;
 		isl_space *space;
@@ -573,30 +571,18 @@ __isl_give isl_union_set *isl_schedule_band_get_ast_build_options(
 	return options;
 }
 
-/* Internal data structure for not().
- */
-struct isl_not_data {
-	isl_bool (*is)(__isl_keep isl_set *set);
-};
-
-/* Does "set" not satisfy data->is()?
- */
-static isl_bool not(__isl_keep isl_set *set, void *user)
-{
-	struct isl_not_data *data = user;
-
-	return isl_bool_not(data->is(set));
-}
-
 /* Does "uset" contain any set that satisfies "is"?
- * In other words, is it not the case that all of them do not satisfy "is"?
+ * "is" is assumed to set its integer argument to 1 if it is satisfied.
  */
-static isl_bool has_any(__isl_keep isl_union_set *uset,
-	isl_bool (*is)(__isl_keep isl_set *set))
+static int has_any(__isl_keep isl_union_set *uset,
+	isl_stat (*is)(__isl_take isl_set *set, void *user))
 {
-	struct isl_not_data data = { is };
+	int found = 0;
 
-	return isl_bool_not(isl_union_set_every_set(uset, &not, &data));
+	if (isl_union_set_foreach_set(uset, is, &found) < 0 && !found)
+		return -1;
+
+	return found;
 }
 
 /* Does "set" live in a space of the form
@@ -604,17 +590,22 @@ static isl_bool has_any(__isl_keep isl_union_set *uset,
  *	isolate[[...] -> [...]]
  *
  * ?
+ *
+ * If so, set *found and abort the search.
  */
-static isl_bool is_isolate(__isl_keep isl_set *set)
+static isl_stat is_isolate(__isl_take isl_set *set, void *user)
 {
+	int *found = user;
+
 	if (isl_set_has_tuple_name(set)) {
 		const char *name;
 		name = isl_set_get_tuple_name(set);
 		if (isl_set_is_wrapping(set) && !strcmp(name, "isolate"))
-			return isl_bool_true;
+			*found = 1;
 	}
+	isl_set_free(set);
 
-	return isl_bool_false;
+	return *found ? isl_stat_error : isl_stat_ok;
 }
 
 /* Does "options" include an option of the ofrm
@@ -623,21 +614,19 @@ static isl_bool is_isolate(__isl_keep isl_set *set)
  *
  * ?
  */
-static isl_bool has_isolate_option(__isl_keep isl_union_set *options)
+static int has_isolate_option(__isl_keep isl_union_set *options)
 {
 	return has_any(options, &is_isolate);
 }
 
 /* Does "set" encode a loop AST generation option?
  */
-static isl_bool is_loop_type_option(__isl_keep isl_set *set)
+static isl_stat is_loop_type_option(__isl_take isl_set *set, void *user)
 {
-	isl_size dim;
+	int *found = user;
 
-	dim = isl_set_dim(set, isl_dim_set);
-	if (dim < 0)
-		return isl_bool_error;
-	if (dim == 1 && isl_set_has_tuple_name(set)) {
+	if (isl_set_dim(set, isl_dim_set) == 1 &&
+	    isl_set_has_tuple_name(set)) {
 		const char *name;
 		enum isl_ast_loop_type type;
 		name = isl_set_get_tuple_name(set);
@@ -645,11 +634,13 @@ static isl_bool is_loop_type_option(__isl_keep isl_set *set)
 		    type <= isl_ast_loop_separate; ++type) {
 			if (strcmp(name, option_str[type]))
 				continue;
-			return isl_bool_true;
+			*found = 1;
+			break;
 		}
 	}
+	isl_set_free(set);
 
-	return isl_bool_false;
+	return *found ? isl_stat_error : isl_stat_ok;
 }
 
 /* Does "set" encode a loop AST generation option for the isolated part?
@@ -659,19 +650,22 @@ static isl_bool is_loop_type_option(__isl_keep isl_set *set)
  *
  * with t equal to "atomic", "unroll" or "separate"?
  */
-static isl_bool is_isolate_loop_type_option(__isl_keep isl_set *set)
+static isl_stat is_isolate_loop_type_option(__isl_take isl_set *set, void *user)
 {
+	int *found = user;
 	const char *name;
 	enum isl_ast_loop_type type;
 	isl_map *map;
 
-	if (!isl_set_is_wrapping(set))
-		return isl_bool_false;
-	map = isl_set_unwrap(isl_set_copy(set));
+	if (!isl_set_is_wrapping(set)) {
+		isl_set_free(set);
+		return isl_stat_ok;
+	}
+	map = isl_set_unwrap(set);
 	if (!isl_map_has_tuple_name(map, isl_dim_in) ||
 	    !isl_map_has_tuple_name(map, isl_dim_out)) {
 		isl_map_free(map);
-		return isl_bool_false;
+		return isl_stat_ok;
 	}
 	name = isl_map_get_tuple_name(map, isl_dim_in);
 	if (!strcmp(name, "isolate")) {
@@ -680,26 +674,26 @@ static isl_bool is_isolate_loop_type_option(__isl_keep isl_set *set)
 		    type <= isl_ast_loop_separate; ++type) {
 			if (strcmp(name, option_str[type]))
 				continue;
-			isl_map_free(map);
-			return isl_bool_true;
+			*found = 1;
+			break;
 		}
 	}
 	isl_map_free(map);
 
-	return isl_bool_false;
+	return *found ? isl_stat_error : isl_stat_ok;
 }
 
 /* Does "options" encode any loop AST generation options
  * for the isolated part?
  */
-static isl_bool has_isolate_loop_type_options(__isl_keep isl_union_set *options)
+static int has_isolate_loop_type_options(__isl_keep isl_union_set *options)
 {
 	return has_any(options, &is_isolate_loop_type_option);
 }
 
 /* Does "options" encode any loop AST generation options?
  */
-static isl_bool has_loop_type_options(__isl_keep isl_union_set *options)
+static int has_loop_type_options(__isl_keep isl_union_set *options)
 {
 	return has_any(options, &is_loop_type_option);
 }
@@ -865,7 +859,7 @@ static __isl_give isl_union_set *clear_isolate_loop_types(
 __isl_give isl_schedule_band *isl_schedule_band_set_ast_build_options(
 	__isl_take isl_schedule_band *band, __isl_take isl_union_set *options)
 {
-	isl_bool has_isolate, has_loop_type, has_isolate_loop_type;
+	int has_isolate, has_loop_type, has_isolate_loop_type;
 
 	band = isl_schedule_band_cow(band);
 	if (!band || !options)
@@ -913,62 +907,6 @@ error:
 	return NULL;
 }
 
-/* Return the "isolate" option associated to "band", assuming
- * it at appears at schedule depth "depth".
- *
- * The isolate option is of the form
- *
- *	isolate[[flattened outer bands] -> band]
- */
-__isl_give isl_set *isl_schedule_band_get_ast_isolate_option(
-	__isl_keep isl_schedule_band *band, int depth)
-{
-	isl_space *space;
-	isl_set *isolate;
-
-	if (!band)
-		return NULL;
-
-	space = isl_schedule_band_get_space(band);
-	space = isl_space_from_range(space);
-	space = isl_space_add_dims(space, isl_dim_in, depth);
-	space = isl_space_wrap(space);
-	space = isl_space_set_tuple_name(space, isl_dim_set, "isolate");
-
-	isolate = isl_union_set_extract_set(band->ast_build_options, space);
-
-	return isolate;
-}
-
-/* Replace the option "drop" in the AST build options by "add".
- * That is, remove "drop" and add "add".
- */
-__isl_give isl_schedule_band *isl_schedule_band_replace_ast_build_option(
-	__isl_take isl_schedule_band *band, __isl_take isl_set *drop,
-	__isl_take isl_set *add)
-{
-	isl_union_set *options;
-
-	band = isl_schedule_band_cow(band);
-	if (!band)
-		goto error;
-
-	options = band->ast_build_options;
-	options = isl_union_set_subtract(options, isl_union_set_from_set(drop));
-	options = isl_union_set_union(options, isl_union_set_from_set(add));
-	band->ast_build_options = options;
-
-	if (!band->ast_build_options)
-		return isl_schedule_band_free(band);
-
-	return band;
-error:
-	isl_schedule_band_free(band);
-	isl_set_free(drop);
-	isl_set_free(add);
-	return NULL;
-}
-
 /* Multiply the partial schedule of "band" with the factors in "mv".
  * Replace the result by its greatest integer part to ensure
  * that the schedule is always integral.
@@ -1012,61 +950,6 @@ error:
 	return NULL;
 }
 
-/* Reduce the partial schedule of "band" modulo the factors in "mv".
- */
-__isl_give isl_schedule_band *isl_schedule_band_mod(
-	__isl_take isl_schedule_band *band, __isl_take isl_multi_val *mv)
-{
-	band = isl_schedule_band_cow(band);
-	if (!band || !mv)
-		goto error;
-	band->mupa = isl_multi_union_pw_aff_mod_multi_val(band->mupa, mv);
-	if (!band->mupa)
-		return isl_schedule_band_free(band);
-	return band;
-error:
-	isl_schedule_band_free(band);
-	isl_multi_val_free(mv);
-	return NULL;
-}
-
-/* Shift the partial schedule of "band" by "shift" after checking
- * that the domain of the partial schedule would not be affected
- * by this shift.
- */
-__isl_give isl_schedule_band *isl_schedule_band_shift(
-	__isl_take isl_schedule_band *band,
-	__isl_take isl_multi_union_pw_aff *shift)
-{
-	isl_union_set *dom1, *dom2;
-	isl_bool subset;
-
-	band = isl_schedule_band_cow(band);
-	if (!band || !shift)
-		goto error;
-	dom1 = isl_multi_union_pw_aff_domain(
-				isl_multi_union_pw_aff_copy(band->mupa));
-	dom2 = isl_multi_union_pw_aff_domain(
-				isl_multi_union_pw_aff_copy(shift));
-	subset = isl_union_set_is_subset(dom1, dom2);
-	isl_union_set_free(dom1);
-	isl_union_set_free(dom2);
-	if (subset < 0)
-		goto error;
-	if (!subset)
-		isl_die(isl_schedule_band_get_ctx(band), isl_error_invalid,
-			"domain of shift needs to include domain of "
-			"partial schedule", goto error);
-	band->mupa = isl_multi_union_pw_aff_add(band->mupa, shift);
-	if (!band->mupa)
-		return isl_schedule_band_free(band);
-	return band;
-error:
-	isl_schedule_band_free(band);
-	isl_multi_union_pw_aff_free(shift);
-	return NULL;
-}
-
 /* Given the schedule of a band, construct the corresponding
  * schedule for the tile loops based on the given tile sizes
  * and return the result.
@@ -1082,17 +965,14 @@ static isl_multi_union_pw_aff *isl_multi_union_pw_aff_tile(
 	__isl_take isl_multi_val *sizes)
 {
 	isl_ctx *ctx;
-	int i;
-	isl_size n;
+	int i, n;
 	isl_val *v;
 	int scale;
 
 	ctx = isl_multi_val_get_ctx(sizes);
 	scale = isl_options_get_tile_scale_tile_loops(ctx);
 
-	n = isl_multi_union_pw_aff_size(sched);
-	if (n < 0)
-		sched = isl_multi_union_pw_aff_free(sched);
+	n = isl_multi_union_pw_aff_dim(sched, isl_dim_set);
 	for (i = 0; i < n; ++i) {
 		isl_union_pw_aff *upa;
 
@@ -1182,7 +1062,8 @@ error:
  * We apply the transformation even if "n" is zero to ensure consistent
  * behavior with respect to changes in the schedule space.
  *
- * The caller is responsible for updating the isolate option.
+ * The loop AST generation types for the isolated part become
+ * meaningless after dropping dimensions, so we remove them.
  */
 __isl_give isl_schedule_band *isl_schedule_band_drop(
 	__isl_take isl_schedule_band *band, int pos, int n)
@@ -1208,10 +1089,8 @@ __isl_give isl_schedule_band *isl_schedule_band_drop(
 	if (band->loop_type)
 		for (i = pos + n; i < band->n; ++i)
 			band->loop_type[i - n] = band->loop_type[i];
-	if (band->isolate_loop_type)
-		for (i = pos + n; i < band->n; ++i)
-			band->isolate_loop_type[i - n] =
-						    band->isolate_loop_type[i];
+	free(band->isolate_loop_type);
+	band->isolate_loop_type = NULL;
 
 	band->n -= n;
 

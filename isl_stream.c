@@ -9,23 +9,23 @@
 
 #include <ctype.h>
 #include <string.h>
-#include <isl_ctx_private.h>
+#include <strings.h>
+#include <isl/ctx.h>
 #include <isl_stream_private.h>
 #include <isl/map.h>
 #include <isl/aff.h>
 #include <isl_val_private.h>
-#include <isl_options_private.h>
 
 struct isl_keyword {
 	char			*name;
 	enum isl_token_type	type;
 };
 
-static isl_bool same_name(const void *entry, const void *val)
+static int same_name(const void *entry, const void *val)
 {
 	const struct isl_keyword *keyword = (const struct isl_keyword *)entry;
 
-	return isl_bool_ok(!strcmp(keyword->name, val));
+	return !strcmp(keyword->name, val);
 }
 
 enum isl_token_type isl_stream_register_keyword(__isl_keep isl_stream *s,
@@ -101,15 +101,6 @@ __isl_give isl_val *isl_token_get_val(isl_ctx *ctx, struct isl_token *tok)
 	return isl_val_int_from_isl_int(ctx, tok->u.v);
 }
 
-/* Does the given token have a string representation?
- */
-isl_bool isl_token_has_str(struct isl_token *tok)
-{
-	if (!tok)
-		return isl_bool_error;
-	return isl_bool_ok(tok->u.s != NULL);
-}
-
 /* Given a token with a string representation, return a copy of this string.
  */
 __isl_give char *isl_token_get_str(isl_ctx *ctx, struct isl_token *tok)
@@ -144,12 +135,6 @@ void isl_stream_error(__isl_keep isl_stream *s, struct isl_token *tok,
 {
 	int line = tok ? tok->line : s->line;
 	int col = tok ? tok->col : s->col;
-
-	isl_ctx_set_full_error(s->ctx, isl_error_invalid, "syntax error",
-				__FILE__, __LINE__);
-
-	if (s->ctx->opt->on_error == ISL_ON_ERROR_CONTINUE)
-		return;
 	fprintf(stderr, "syntax error (%d, %d): %s\n", line, col, msg);
 	if (tok) {
 		if (tok->type < 256)
@@ -181,8 +166,6 @@ void isl_stream_error(__isl_keep isl_stream *s, struct isl_token *tok,
 		else
 			fprintf(stderr, "got token type %d\n", tok->type);
 	}
-	if (s->ctx->opt->on_error == ISL_ON_ERROR_ABORT)
-		abort();
 }
 
 static __isl_give isl_stream* isl_stream_new(struct isl_ctx *ctx)
@@ -363,9 +346,7 @@ static enum isl_token_type check_keywords(__isl_keep isl_stream *s)
 	name_hash = isl_hash_string(isl_hash_init(), s->buffer);
 	entry = isl_hash_table_find(s->ctx, s->keywords, name_hash, same_name,
 					s->buffer, 0);
-	if (!entry)
-		return ISL_TOKEN_ERROR;
-	if (entry != isl_hash_table_entry_none) {
+	if (entry) {
 		keyword = entry->data;
 		return keyword->type;
 	}
@@ -455,13 +436,15 @@ static struct isl_token *next_token(__isl_keep isl_stream *s, int same_line)
 		}
 		if (c != -1)
 			isl_stream_ungetc(s, c);
-		tok = isl_token_new(s->ctx, line, col, old_line != line);
-		if (!tok)
-			return NULL;
-		tok->type = (enum isl_token_type) '-';
-		return tok;
+		if (!isdigit(c)) {
+			tok = isl_token_new(s->ctx, line, col, old_line != line);
+			if (!tok)
+				return NULL;
+			tok->type = (enum isl_token_type) '-';
+			return tok;
+		}
 	}
-	if (isdigit(c)) {
+	if (c == '-' || isdigit(c)) {
 		int minus = c == '-';
 		tok = isl_token_new(s->ctx, line, col, old_line != line);
 		if (!tok)
@@ -635,19 +618,13 @@ static struct isl_token *next_token(__isl_keep isl_stream *s, int same_line)
 		tok = isl_token_new(s->ctx, line, col, old_line != line);
 		if (!tok)
 			return NULL;
-		if ((c = isl_stream_getc(s)) == '\\') {
+		if ((c = isl_stream_getc(s)) != '\\' && c != -1) {
+			tok->type = (enum isl_token_type) '/';
+			isl_stream_ungetc(s, c);
+		} else {
 			tok->u.s = strdup("/\\");
 			tok->type = ISL_TOKEN_AND;
-			return tok;
-		} else if (c == '/') {
-			tok->u.s = strdup("//");
-			tok->type = ISL_TOKEN_INT_DIV;
-			return tok;
-		} else {
-			tok->type = (enum isl_token_type) '/';
 		}
-		if (c != -1)
-			isl_stream_ungetc(s, c);
 		return tok;
 	}
 	if (c == '\\') {
@@ -749,17 +726,14 @@ int isl_stream_eat(__isl_keep isl_stream *s, int type)
 	struct isl_token *tok;
 
 	tok = isl_stream_next_token(s);
-	if (!tok) {
-		if (s->eof)
-			isl_stream_error(s, NULL, "unexpected EOF");
+	if (!tok)
 		return -1;
-	}
 	if (tok->type == type) {
 		isl_token_free(tok);
 		return 0;
 	}
 	isl_stream_error(s, tok, "expecting other token");
-	isl_token_free(tok);
+	isl_stream_push_token(s, tok);
 	return -1;
 }
 
@@ -854,19 +828,19 @@ static int push_state(__isl_keep isl_stream *s, enum isl_yaml_state state)
 }
 
 /* Remove the innermost active YAML element from the stack.
- * Return isl_stat_ok on success and isl_stat_error on failure.
+ * Return 0 on success and -1 on failure.
  */
-static isl_stat pop_state(__isl_keep isl_stream *s)
+static int pop_state(__isl_keep isl_stream *s)
 {
 	if (!s)
-		return isl_stat_error;
+		return -1;
 	if (s->yaml_depth < 1)
 		isl_die(isl_stream_get_ctx(s), isl_error_invalid,
-			"not in YAML construct", return isl_stat_error);
+			"not in YAML construct", return -1);
 
 	s->yaml_depth--;
 
-	return isl_stat_ok;
+	return 0;
 }
 
 /* Set the state of the innermost active YAML element to "state".
@@ -899,17 +873,17 @@ static enum isl_yaml_state current_state(__isl_keep isl_stream *s)
 
 /* Set the indentation of the innermost active YAML element to "indent".
  * If "indent" is equal to ISL_YAML_INDENT_FLOW, then this means
- * that the current element is in flow format.
+ * that the current elemient is in flow format.
  */
-static isl_stat set_yaml_indent(__isl_keep isl_stream *s, int indent)
+static int set_yaml_indent(__isl_keep isl_stream *s, int indent)
 {
 	if (s->yaml_depth < 1)
 		isl_die(s->ctx, isl_error_internal,
-			"not in YAML element", return isl_stat_error);
+			"not in YAML element", return -1);
 
 	s->yaml_indent[s->yaml_depth - 1] = indent;
 
-	return isl_stat_ok;
+	return 0;
 }
 
 /* Return the indentation of the innermost active YAML element
@@ -925,9 +899,9 @@ static int get_yaml_indent(__isl_keep isl_stream *s)
 }
 
 /* Move to the next state at the innermost level.
- * Return isl_bool_true if successful.
- * Return isl_bool_false if we are at the end of the innermost level.
- * Return isl_bool_error on error.
+ * Return 1 if successful.
+ * Return 0 if we are at the end of the innermost level.
+ * Return -1 on error.
  *
  * If we are in state isl_yaml_mapping_key_start, then we have just
  * started a mapping and we are expecting a key.  If the mapping started
@@ -963,7 +937,7 @@ static int get_yaml_indent(__isl_keep isl_stream *s)
  * If the first token is not a dash or if it has a smaller indentation,
  * then we have reached the end of the current sequence.
  */
-isl_bool isl_stream_yaml_next(__isl_keep isl_stream *s)
+int isl_stream_yaml_next(__isl_keep isl_stream *s)
 {
 	struct isl_token *tok;
 	enum isl_yaml_state state;
@@ -972,93 +946,93 @@ isl_bool isl_stream_yaml_next(__isl_keep isl_stream *s)
 	state = current_state(s);
 	if (state == isl_yaml_none)
 		isl_die(s->ctx, isl_error_invalid,
-			"not in YAML element", return isl_bool_error);
+			"not in YAML element", return -1);
 	switch (state) {
 	case isl_yaml_mapping_key_start:
 		if (get_yaml_indent(s) == ISL_YAML_INDENT_FLOW &&
 		    isl_stream_next_token_is(s, '}'))
-			return isl_bool_false;
+			return 0;
 		if (update_state(s, isl_yaml_mapping_key) < 0)
-			return isl_bool_error;
-		return isl_bool_true;
+			return -1;
+		return 1;
 	case isl_yaml_mapping_key:
 		tok = isl_stream_next_token(s);
 		if (!tok) {
 			if (s->eof)
 				isl_stream_error(s, NULL, "unexpected EOF");
-			return isl_bool_error;
+			return -1;
 		}
 		if (tok->type == ':') {
 			isl_token_free(tok);
 			if (update_state(s, isl_yaml_mapping_val) < 0)
-				return isl_bool_error;
-			return isl_bool_true;
+				return -1;
+			return 1;
 		}
 		isl_stream_error(s, tok, "expecting ':'");
 		isl_stream_push_token(s, tok);
-		return isl_bool_error;
+		return -1;
 	case isl_yaml_mapping_val:
 		if (get_yaml_indent(s) == ISL_YAML_INDENT_FLOW) {
 			if (!isl_stream_eat_if_available(s, ','))
-				return isl_bool_false;
+				return 0;
 			if (update_state(s, isl_yaml_mapping_key) < 0)
-				return isl_bool_error;
-			return isl_bool_true;
+				return -1;
+			return 1;
 		}
 		tok = isl_stream_next_token(s);
 		if (!tok)
-			return isl_bool_false;
+			return 0;
 		indent = tok->col - 1;
 		isl_stream_push_token(s, tok);
 		if (indent < get_yaml_indent(s))
-			return isl_bool_false;
+			return 0;
 		if (update_state(s, isl_yaml_mapping_key) < 0)
-			return isl_bool_error;
-		return isl_bool_true;
+			return -1;
+		return 1;
 	case isl_yaml_sequence_start:
 		if (get_yaml_indent(s) == ISL_YAML_INDENT_FLOW) {
 			if (isl_stream_next_token_is(s, ']'))
-				return isl_bool_false;
+				return 0;
 			if (update_state(s, isl_yaml_sequence) < 0)
-				return isl_bool_error;
-			return isl_bool_true;
+				return -1;
+			return 1;
 		}
 		tok = isl_stream_next_token(s);
 		if (!tok) {
 			if (s->eof)
 				isl_stream_error(s, NULL, "unexpected EOF");
-			return isl_bool_error;
+			return -1;
 		}
 		if (tok->type == '-') {
 			isl_token_free(tok);
 			if (update_state(s, isl_yaml_sequence) < 0)
-				return isl_bool_error;
-			return isl_bool_true;
+				return -1;
+			return 1;
 		}
 		isl_stream_error(s, tok, "expecting '-'");
 		isl_stream_push_token(s, tok);
-		return isl_bool_false;
+		return 0;
 	case isl_yaml_sequence:
 		if (get_yaml_indent(s) == ISL_YAML_INDENT_FLOW)
-			return isl_bool_ok(isl_stream_eat_if_available(s, ','));
+			return isl_stream_eat_if_available(s, ',');
 		tok = isl_stream_next_token(s);
 		if (!tok)
-			return isl_bool_false;
+			return 0;
 		indent = tok->col - 1;
 		if (indent < get_yaml_indent(s) || tok->type != '-') {
 			isl_stream_push_token(s, tok);
-			return isl_bool_false;
+			return 0;
 		}
 		isl_token_free(tok);
-		return isl_bool_true;
+		return 1;
 	default:
 		isl_die(s->ctx, isl_error_internal,
-			"unexpected state", return isl_bool_error);
+			"unexpected state", return 0);
 	}
 }
 
 /* Start reading a YAML mapping.
- * Return isl_stat_ok on success and isl_stat_error on error.
+ * Return 0 on success and -1 on error.
  *
  * If the first token on the stream is a '{' then we remove this token
  * from the stream and keep track of the fact that the mapping
@@ -1067,19 +1041,19 @@ isl_bool isl_stream_yaml_next(__isl_keep isl_stream *s)
  * keep track of its indentation, but keep the token on the stream.
  * In both cases, the next token we expect is the first key of the mapping.
  */
-isl_stat isl_stream_yaml_read_start_mapping(__isl_keep isl_stream *s)
+int isl_stream_yaml_read_start_mapping(__isl_keep isl_stream *s)
 {
 	struct isl_token *tok;
 	int indent;
 
 	if (push_state(s, isl_yaml_mapping_key_start) < 0)
-		return isl_stat_error;
+		return -1;
 
 	tok = isl_stream_next_token(s);
 	if (!tok) {
 		if (s->eof)
 			isl_stream_error(s, NULL, "unexpected EOF");
-		return isl_stat_error;
+		return -1;
 	}
 	if (isl_token_get_type(tok) == '{') {
 		isl_token_free(tok);
@@ -1092,21 +1066,21 @@ isl_stat isl_stream_yaml_read_start_mapping(__isl_keep isl_stream *s)
 }
 
 /* Finish reading a YAML mapping.
- * Return isl_stat_ok on success and isl_stat_error on error.
+ * Return 0 on success and -1 on error.
  *
  * If the mapping started with a '{', then we expect a '}' to close
  * the mapping.
  * Otherwise, we double-check that the next token (if any)
  * has a smaller indentation than that of the current mapping.
  */
-isl_stat isl_stream_yaml_read_end_mapping(__isl_keep isl_stream *s)
+int isl_stream_yaml_read_end_mapping(__isl_keep isl_stream *s)
 {
 	struct isl_token *tok;
 	int indent;
 
 	if (get_yaml_indent(s) == ISL_YAML_INDENT_FLOW) {
 		if (isl_stream_eat(s, '}') < 0)
-			return isl_stat_error;
+			return -1;
 		return pop_state(s);
 	}
 
@@ -1119,13 +1093,13 @@ isl_stat isl_stream_yaml_read_end_mapping(__isl_keep isl_stream *s)
 
 	if (indent >= get_yaml_indent(s))
 		isl_die(isl_stream_get_ctx(s), isl_error_invalid,
-			"mapping not finished", return isl_stat_error);
+			"mapping not finished", return -1);
 
 	return pop_state(s);
 }
 
 /* Start reading a YAML sequence.
- * Return isl_stat_ok on success and isl_stat_error on error.
+ * Return 0 on success and -1 on error.
  *
  * If the first token on the stream is a '[' then we remove this token
  * from the stream and keep track of the fact that the sequence
@@ -1136,19 +1110,19 @@ isl_stat isl_stream_yaml_read_end_mapping(__isl_keep isl_stream *s)
  * In both cases, the next token we expect is the first element
  * of the sequence.
  */
-isl_stat isl_stream_yaml_read_start_sequence(__isl_keep isl_stream *s)
+int isl_stream_yaml_read_start_sequence(__isl_keep isl_stream *s)
 {
 	struct isl_token *tok;
 	int indent;
 
 	if (push_state(s, isl_yaml_sequence_start) < 0)
-		return isl_stat_error;
+		return -1;
 
 	tok = isl_stream_next_token(s);
 	if (!tok) {
 		if (s->eof)
 			isl_stream_error(s, NULL, "unexpected EOF");
-		return isl_stat_error;
+		return -1;
 	}
 	if (isl_token_get_type(tok) == '[') {
 		isl_token_free(tok);
@@ -1161,7 +1135,7 @@ isl_stat isl_stream_yaml_read_start_sequence(__isl_keep isl_stream *s)
 }
 
 /* Finish reading a YAML sequence.
- * Return isl_stat_ok on success and isl_stat_error on error.
+ * Return 0 on success and -1 on error.
  *
  * If the sequence started with a '[', then we expect a ']' to close
  * the sequence.
@@ -1169,7 +1143,7 @@ isl_stat isl_stream_yaml_read_start_sequence(__isl_keep isl_stream *s)
  * is not a dash or that it has a smaller indentation than
  * that of the current sequence.
  */
-isl_stat isl_stream_yaml_read_end_sequence(__isl_keep isl_stream *s)
+int isl_stream_yaml_read_end_sequence(__isl_keep isl_stream *s)
 {
 	struct isl_token *tok;
 	int indent;
@@ -1177,7 +1151,7 @@ isl_stat isl_stream_yaml_read_end_sequence(__isl_keep isl_stream *s)
 
 	if (get_yaml_indent(s) == ISL_YAML_INDENT_FLOW) {
 		if (isl_stream_eat(s, ']') < 0)
-			return isl_stat_error;
+			return -1;
 		return pop_state(s);
 	}
 
@@ -1191,7 +1165,7 @@ isl_stat isl_stream_yaml_read_end_sequence(__isl_keep isl_stream *s)
 
 	if (indent >= get_yaml_indent(s) && dash)
 		isl_die(isl_stream_get_ctx(s), isl_error_invalid,
-			"sequence not finished", return isl_stat_error);
+			"sequence not finished", return -1);
 
 	return pop_state(s);
 }

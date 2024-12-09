@@ -155,7 +155,8 @@ struct isl_tab *isl_tab_compute_reduced_basis(struct isl_tab *tab)
 			GBR_lp_get_obj_val(lp, &F_new);
 			fixed = GBR_lp_is_fixed(lp);
 			GBR_set_ui(alpha, 0);
-		} else if (use_saved) {
+		} else
+		if (use_saved) {
 			row = GBR_lp_next_row(lp);
 			GBR_set(F_new, F_saved);
 			fixed = fixed_saved;
@@ -313,14 +314,20 @@ error:
  * basis with the equalities first.  Otherwise, we start off with
  * the identity matrix.
  */
-__isl_give isl_mat *isl_basic_set_reduced_basis(__isl_keep isl_basic_set *bset)
+struct isl_mat *isl_basic_set_reduced_basis(struct isl_basic_set *bset)
 {
 	struct isl_mat *basis;
 	struct isl_tab *tab;
 
-	if (isl_basic_set_check_no_locals(bset) < 0 ||
-	    isl_basic_set_check_no_params(bset) < 0)
+	if (!bset)
 		return NULL;
+
+	if (isl_basic_set_dim(bset, isl_dim_div) != 0)
+		isl_die(bset->ctx, isl_error_invalid,
+			"no integer division allowed", return NULL);
+	if (isl_basic_set_dim(bset, isl_dim_param) != 0)
+		isl_die(bset->ctx, isl_error_invalid,
+			"no parameters allowed", return NULL);
 
 	tab = isl_tab_from_basic_set(bset, 0);
 	if (!tab)
@@ -330,9 +337,7 @@ __isl_give isl_mat *isl_basic_set_reduced_basis(__isl_keep isl_basic_set *bset)
 		tab->basis = isl_mat_identity(bset->ctx, 1 + tab->n_var);
 	else {
 		isl_mat *eq;
-		isl_size nvar = isl_basic_set_dim(bset, isl_dim_all);
-		if (nvar < 0)
-			goto error;
+		unsigned nvar = isl_basic_set_total_dim(bset);
 		eq = isl_mat_sub_alloc6(bset->ctx, bset->eq, 0, bset->n_eq,
 					1, nvar);
 		eq = isl_mat_left_hermite(eq, 0, NULL, &tab->basis);
@@ -349,7 +354,4 @@ __isl_give isl_mat *isl_basic_set_reduced_basis(__isl_keep isl_basic_set *bset)
 	isl_tab_free(tab);
 
 	return basis;
-error:
-	isl_tab_free(tab);
-	return NULL;
 }

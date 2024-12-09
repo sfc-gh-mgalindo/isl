@@ -1,6 +1,5 @@
 /*
  * Copyright 2008-2009 Katholieke Universiteit Leuven
- * Copyright 2011      INRIA Saclay
  *
  * Use of this software is governed by the MIT license
  *
@@ -44,17 +43,6 @@ void isl_seq_cpy(isl_int *dst, isl_int *src, unsigned len)
 	int i;
 	for (i = 0; i < len; ++i)
 		isl_int_set(dst[i], src[i]);
-}
-
-/* Subtract the sequence "src" from the sequence "dst",
- * both of length "len".
- */
-void isl_seq_sub(isl_int *dst, isl_int *src, unsigned len)
-{
-	int i;
-
-	for (i = 0; i < len; ++i)
-		isl_int_sub(dst[i], dst[i], src[i]);
 }
 
 void isl_seq_submul(isl_int *dst, isl_int f, isl_int *src, unsigned len)
@@ -136,12 +124,9 @@ void isl_seq_combine(isl_int *dst, isl_int m1, isl_int *src1,
 	isl_int_clear(tmp);
 }
 
-/* Eliminate element "pos" from "dst" using "src".
- * In particular, let d = dst[pos] and s = src[pos], then
- * dst is replaced by (|s| dst - sgn(s)d src)/gcd(s,d),
- * such that dst[pos] is zero after the elimination.
- * If "m" is not NULL, then *m is multiplied by |s|/gcd(s,d).
- * That is, it is multiplied by the same factor as "dst".
+/*
+ * Let d = dst[pos] and s = src[pos]
+ * dst is replaced by |s| dst - sgn(s)d src
  */
 void isl_seq_elim(isl_int *dst, isl_int *src, unsigned pos, unsigned len,
 		  isl_int *m)
@@ -222,14 +207,6 @@ int isl_seq_last_non_zero(isl_int *p, unsigned len)
 		if (!isl_int_is_zero(p[i]))
 			return i;
 	return -1;
-}
-
-/* Does the sequence of length "len" starting at "p"
- * contain any non-zero element?
- */
-int isl_seq_any_non_zero(isl_int *p, unsigned len)
-{
-	return isl_seq_first_non_zero(p, len) != -1;
 }
 
 void isl_seq_abs_max(isl_int *p, unsigned len, isl_int *max)
@@ -322,36 +299,6 @@ uint32_t isl_seq_hash(isl_int *p, unsigned len, uint32_t hash)
 		hash = isl_int_hash(p[i], hash);
 	}
 	return hash;
-}
-
-/* Given two affine expressions "p" of length p_len (including the
- * denominator and the constant term) and "subs" of length subs_len,
- * plug in "subs" for the variable at position "pos".
- * The variables of "subs" and "p" are assumed to match up to subs_len,
- * but "p" may have additional variables.
- * "v" is an initialized isl_int that can be used internally.
- *
- * In particular, if "p" represents the expression
- *
- *	(a i + g)/m
- *
- * with i the variable at position "pos" and "subs" represents the expression
- *
- *	f/d
- *
- * then the result represents the expression
- *
- *	(a f + d g)/(m d)
- *
- */
-void isl_seq_substitute(isl_int *p, int pos, isl_int *subs,
-	int p_len, int subs_len, isl_int v)
-{
-	isl_int_set(v, p[1 + pos]);
-	isl_int_set_si(p[1 + pos], 0);
-	isl_seq_combine(p + 1, subs[0], p + 1, v, subs + 1, subs_len - 1);
-	isl_seq_scale(p + subs_len, p + subs_len, subs[0], p_len - subs_len);
-	isl_int_mul(p[0], p[0], subs[0]);
 }
 
 uint32_t isl_seq_get_hash(isl_int *p, unsigned len)

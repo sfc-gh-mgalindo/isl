@@ -14,7 +14,11 @@ ISL_DECLARE_LIST(schedule_tree)
 /* A schedule (sub)tree.
  *
  * The leaves of a tree are not explicitly represented inside
- * the isl_schedule_tree, except when the tree consists of only a leaf.
+ * the isl_schedule_tree.  If a tree consists of only a leaf,
+ * then it is equal to the static object isl_schedule_tree_empty.
+ *
+ * ctx may be NULL if type is isl_schedule_node_leaf.
+ * In this case, ref has a negative value.
  *
  * The "band" field is valid when type is isl_schedule_node_band.
  * The "context" field is valid when type is isl_schedule_node_context
@@ -31,7 +35,7 @@ ISL_DECLARE_LIST(schedule_tree)
  * reaching domain element.  It does not involve any domain constraints.
  *
  * The "extension" field is valid when the is isl_schedule_node_extension
- * maps outer schedule dimensions (the flat product of the outer band nodes)
+ * maps outer schedule dimenions (the flat product of the outer band nodes)
  * to additional iteration domains.
  *
  * The "filter" field is valid when type is isl_schedule_node_filter
@@ -111,9 +115,6 @@ __isl_give isl_schedule_tree *isl_schedule_tree_from_pair(
 __isl_give isl_schedule_tree *isl_schedule_tree_sequence_pair(
 	__isl_take isl_schedule_tree *tree1,
 	__isl_take isl_schedule_tree *tree2);
-__isl_give isl_schedule_tree *isl_schedule_tree_set_pair(
-	__isl_take isl_schedule_tree *tree1,
-	__isl_take isl_schedule_tree *tree2);
 
 isl_bool isl_schedule_tree_is_subtree_anchored(
 	__isl_keep isl_schedule_tree *tree);
@@ -142,8 +143,6 @@ __isl_give isl_union_set *isl_schedule_tree_band_get_ast_build_options(
 	__isl_keep isl_schedule_tree *tree);
 __isl_give isl_schedule_tree *isl_schedule_tree_band_set_ast_build_options(
 	__isl_take isl_schedule_tree *tree, __isl_take isl_union_set *options);
-__isl_give isl_set *isl_schedule_tree_band_get_ast_isolate_option(
-	__isl_keep isl_schedule_tree *tree, int depth);
 __isl_give isl_set *isl_schedule_tree_context_get_context(
 	__isl_keep isl_schedule_tree *tree);
 __isl_give isl_union_set *isl_schedule_tree_domain_get_domain(
@@ -178,7 +177,7 @@ __isl_give isl_schedule_tree *isl_schedule_tree_first_schedule_descendant(
 __isl_give isl_union_map *isl_schedule_tree_get_subtree_schedule_union_map(
 	__isl_keep isl_schedule_tree *tree);
 
-isl_size isl_schedule_tree_band_n_member(__isl_keep isl_schedule_tree *tree);
+unsigned isl_schedule_tree_band_n_member(__isl_keep isl_schedule_tree *tree);
 
 isl_bool isl_schedule_tree_band_member_get_coincident(
 	__isl_keep isl_schedule_tree *tree, int pos);
@@ -190,7 +189,7 @@ __isl_give isl_schedule_tree *isl_schedule_tree_band_set_permutable(
 	__isl_take isl_schedule_tree *tree, int permutable);
 
 int isl_schedule_tree_has_children(__isl_keep isl_schedule_tree *tree);
-isl_size isl_schedule_tree_n_children(__isl_keep isl_schedule_tree *tree);
+int isl_schedule_tree_n_children(__isl_keep isl_schedule_tree *tree);
 __isl_give isl_schedule_tree *isl_schedule_tree_get_child(
 	__isl_keep isl_schedule_tree *tree, int pos);
 
@@ -224,15 +223,10 @@ __isl_give isl_schedule_tree *isl_schedule_tree_band_scale(
 	__isl_take isl_schedule_tree *tree, __isl_take isl_multi_val *mv);
 __isl_give isl_schedule_tree *isl_schedule_tree_band_scale_down(
 	__isl_take isl_schedule_tree *tree, __isl_take isl_multi_val *mv);
-__isl_give isl_schedule_tree *isl_schedule_tree_band_mod(
-	__isl_take isl_schedule_tree *tree, __isl_take isl_multi_val *mv);
 __isl_give isl_schedule_tree *isl_schedule_tree_band_tile(
 	__isl_take isl_schedule_tree *tree, __isl_take isl_multi_val *sizes);
-__isl_give isl_schedule_tree *isl_schedule_tree_band_shift(
-	__isl_take isl_schedule_tree *tree,
-	__isl_take isl_multi_union_pw_aff *shift);
 __isl_give isl_schedule_tree *isl_schedule_tree_band_split(
-	__isl_take isl_schedule_tree *tree, int pos, int depth);
+	__isl_take isl_schedule_tree *tree, int pos);
 __isl_give isl_schedule_tree *isl_schedule_tree_band_gist(
 	__isl_take isl_schedule_tree *tree, __isl_take isl_union_set *context);
 

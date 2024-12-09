@@ -10,7 +10,6 @@
 #ifndef ISL_TAB_H
 #define ISL_TAB_H
 
-#include "isl_int.h"
 #include <isl/lp.h>
 #include <isl/map.h>
 #include <isl/mat.h>
@@ -46,11 +45,10 @@ enum isl_tab_undo_type {
 	isl_tab_undo_drop_sample,
 	isl_tab_undo_saved_samples,
 	isl_tab_undo_callback,
-	isl_tab_undo_ineq_to_eq,
 };
 
 struct isl_tab_callback {
-	isl_stat (*run)(struct isl_tab_callback *cb);
+	int (*run)(struct isl_tab_callback *cb);
 };
 
 union isl_tab_undo_val {
@@ -107,7 +105,7 @@ struct isl_tab_undo {
  *
  * There are "n_var" variables in total.  The first "n_param" of these
  * are called parameters and the last "n_div" of these are called divs.
- * The basic tableau operations make no distinction between different
+ * The basic tableau operations makes no distinction between different
  * kinds of variables.  These special variables are only used while
  * solving PILP problems.
  *
@@ -115,7 +113,7 @@ struct isl_tab_undo {
  * However, the basic operations do not ensure that all dead columns
  * or all redundant rows are detected.
  * isl_tab_detect_implicit_equalities and isl_tab_detect_redundant can be used
- * to perform an exhaustive search for dead columns and redundant rows.
+ * to perform and exhaustive search for dead columns and redundant rows.
  *
  * The samples matrix contains "n_sample" integer points that have at some
  * point been elements satisfying the tableau.  The first "n_outside"
@@ -192,40 +190,37 @@ __isl_give struct isl_tab *isl_tab_from_basic_map(
 	__isl_keep isl_basic_map *bmap, int track);
 __isl_give struct isl_tab *isl_tab_from_basic_set(
 	__isl_keep isl_basic_set *bset, int track);
-struct isl_tab *isl_tab_from_recession_cone(__isl_keep isl_basic_set *bset,
+struct isl_tab *isl_tab_from_recession_cone(struct isl_basic_set *bset,
 	int parametric);
-isl_bool isl_tab_cone_is_bounded(struct isl_tab *tab);
-__isl_give isl_basic_map *isl_basic_map_update_from_tab(
-	__isl_take isl_basic_map *bmap, struct isl_tab *tab);
-__isl_give isl_basic_set *isl_basic_set_update_from_tab(
-	__isl_take isl_basic_set *bset, struct isl_tab *tab);
+int isl_tab_cone_is_bounded(struct isl_tab *tab);
+struct isl_basic_map *isl_basic_map_update_from_tab(struct isl_basic_map *bmap,
+	struct isl_tab *tab);
+struct isl_basic_set *isl_basic_set_update_from_tab(struct isl_basic_set *bset,
+	struct isl_tab *tab);
 int isl_tab_detect_implicit_equalities(struct isl_tab *tab) WARN_UNUSED;
 __isl_give isl_basic_map *isl_tab_make_equalities_explicit(struct isl_tab *tab,
 	__isl_take isl_basic_map *bmap);
 int isl_tab_detect_redundant(struct isl_tab *tab) WARN_UNUSED;
-isl_stat isl_tab_restore_redundant(struct isl_tab *tab);
 #define ISL_TAB_SAVE_DUAL	(1 << 0)
 enum isl_lp_result isl_tab_min(struct isl_tab *tab,
 	isl_int *f, isl_int denom, isl_int *opt, isl_int *opt_denom,
 	unsigned flags) WARN_UNUSED;
 
-isl_stat isl_tab_add_ineq(struct isl_tab *tab, isl_int *ineq) WARN_UNUSED;
-isl_stat isl_tab_add_eq(struct isl_tab *tab, isl_int *eq) WARN_UNUSED;
+int isl_tab_add_ineq(struct isl_tab *tab, isl_int *ineq) WARN_UNUSED;
+int isl_tab_add_eq(struct isl_tab *tab, isl_int *eq) WARN_UNUSED;
 int isl_tab_add_valid_eq(struct isl_tab *tab, isl_int *eq) WARN_UNUSED;
 
 int isl_tab_freeze_constraint(struct isl_tab *tab, int con) WARN_UNUSED;
 
-isl_stat isl_tab_track_bmap(struct isl_tab *tab, __isl_take isl_basic_map *bmap)
-	WARN_UNUSED;
-isl_stat isl_tab_track_bset(struct isl_tab *tab, __isl_take isl_basic_set *bset)
-	WARN_UNUSED;
+int isl_tab_track_bmap(struct isl_tab *tab, __isl_take isl_basic_map *bmap) WARN_UNUSED;
+int isl_tab_track_bset(struct isl_tab *tab, __isl_take isl_basic_set *bset) WARN_UNUSED;
 __isl_keep isl_basic_set *isl_tab_peek_bset(struct isl_tab *tab);
 
 int isl_tab_is_equality(struct isl_tab *tab, int con);
 int isl_tab_is_redundant(struct isl_tab *tab, int con);
 
 int isl_tab_sample_is_integer(struct isl_tab *tab);
-__isl_give isl_vec *isl_tab_get_sample_value(struct isl_tab *tab);
+struct isl_vec *isl_tab_get_sample_value(struct isl_tab *tab);
 
 enum isl_ineq_type {
 	isl_ineq_error = -1,
@@ -239,9 +234,7 @@ enum isl_ineq_type {
 enum isl_ineq_type isl_tab_ineq_type(struct isl_tab *tab, isl_int *ineq);
 
 struct isl_tab_undo *isl_tab_snap(struct isl_tab *tab);
-isl_stat isl_tab_rollback(struct isl_tab *tab, struct isl_tab_undo *snap) WARN_UNUSED;
-isl_bool isl_tab_need_undo(struct isl_tab *tab);
-void isl_tab_clear_undo(struct isl_tab *tab);
+int isl_tab_rollback(struct isl_tab *tab, struct isl_tab_undo *snap) WARN_UNUSED;
 
 int isl_tab_relax(struct isl_tab *tab, int con) WARN_UNUSED;
 int isl_tab_select_facet(struct isl_tab *tab, int con) WARN_UNUSED;
@@ -249,58 +242,40 @@ int isl_tab_unrestrict(struct isl_tab *tab, int con) WARN_UNUSED;
 
 void isl_tab_dump(__isl_keep struct isl_tab *tab);
 
-/* Compute maximum instead of minimum. */
-#define ISL_OPT_MAX		(1 << 0)
-/* Compute full instead of partial optimum; also, domain argument is NULL. */
-#define ISL_OPT_FULL		(1 << 1)
-/* Result should be free of (unknown) quantified variables. */
-#define ISL_OPT_QE		(1 << 2)
-__isl_give isl_map *isl_tab_basic_map_partial_lexopt(
+struct isl_map *isl_tab_basic_map_partial_lexopt(
+		struct isl_basic_map *bmap, struct isl_basic_set *dom,
+		struct isl_set **empty, int max);
+__isl_give isl_pw_multi_aff *isl_basic_map_partial_lexopt_pw_multi_aff(
 	__isl_take isl_basic_map *bmap, __isl_take isl_basic_set *dom,
-	__isl_give isl_set **empty, unsigned flags);
-__isl_give isl_pw_multi_aff *isl_tab_basic_map_partial_lexopt_pw_multi_aff(
-	__isl_take isl_basic_map *bmap, __isl_take isl_basic_set *dom,
-	__isl_give isl_set **empty, unsigned flags);
+	__isl_give isl_set **empty, int max);
 
-/* An isl_trivial_region represents a non-triviality region.
- * The region is trivial if applying "trivial" to a given sequence
- * of variables results in a zero vector.
+/* An isl_region represents a sequence of consecutive variables.
  * pos is the location (starting at 0) of the first variable in the sequence.
  */
-struct isl_trivial_region {
+struct isl_region {
 	int pos;
-	isl_mat *trivial;
+	int len;
 };
 
 __isl_give isl_vec *isl_tab_basic_set_non_trivial_lexmin(
 	__isl_take isl_basic_set *bset, int n_op, int n_region,
-	struct isl_trivial_region *region,
+	struct isl_region *region,
 	int (*conflict)(int con, void *user), void *user);
-
-struct isl_tab_lexmin;
-typedef struct isl_tab_lexmin isl_tab_lexmin;
-
-__isl_give isl_tab_lexmin *isl_tab_lexmin_from_basic_set(
+__isl_give isl_vec *isl_tab_basic_set_non_neg_lexmin(
 	__isl_take isl_basic_set *bset);
-int isl_tab_lexmin_dim(__isl_keep isl_tab_lexmin *tl);
-__isl_give isl_tab_lexmin *isl_tab_lexmin_add_eq(__isl_take isl_tab_lexmin *tl,
-	isl_int *eq);
-__isl_give isl_tab_lexmin *isl_tab_lexmin_cut_to_integer(
-	__isl_take isl_tab_lexmin *tl);
-__isl_give isl_vec *isl_tab_lexmin_get_solution(__isl_keep isl_tab_lexmin *tl);
-__isl_null isl_tab_lexmin *isl_tab_lexmin_free(__isl_take isl_tab_lexmin *tl);
 
 /* private */
 
 struct isl_tab_var *isl_tab_var_from_row(struct isl_tab *tab, int i);
 int isl_tab_mark_redundant(struct isl_tab *tab, int row) WARN_UNUSED;
 int isl_tab_mark_rational(struct isl_tab *tab) WARN_UNUSED;
-isl_stat isl_tab_mark_empty(struct isl_tab *tab) WARN_UNUSED;
+int isl_tab_mark_empty(struct isl_tab *tab) WARN_UNUSED;
 struct isl_tab *isl_tab_dup(struct isl_tab *tab);
 struct isl_tab *isl_tab_product(struct isl_tab *tab1, struct isl_tab *tab2);
 int isl_tab_extend_cons(struct isl_tab *tab, unsigned n_new) WARN_UNUSED;
 int isl_tab_allocate_con(struct isl_tab *tab) WARN_UNUSED;
 int isl_tab_extend_vars(struct isl_tab *tab, unsigned n_new) WARN_UNUSED;
+int isl_tab_allocate_var(struct isl_tab *tab) WARN_UNUSED;
 int isl_tab_insert_var(struct isl_tab *tab, int pos) WARN_UNUSED;
 int isl_tab_pivot(struct isl_tab *tab, int row, int col) WARN_UNUSED;
 int isl_tab_add_row(struct isl_tab *tab, isl_int *line) WARN_UNUSED;
@@ -309,32 +284,26 @@ int isl_tab_min_at_most_neg_one(struct isl_tab *tab, struct isl_tab_var *var);
 int isl_tab_sign_of_max(struct isl_tab *tab, int con);
 int isl_tab_kill_col(struct isl_tab *tab, int col) WARN_UNUSED;
 
-isl_stat isl_tab_push(struct isl_tab *tab, enum isl_tab_undo_type type)
-	WARN_UNUSED;
-isl_stat isl_tab_push_var(struct isl_tab *tab,
+int isl_tab_push(struct isl_tab *tab, enum isl_tab_undo_type type) WARN_UNUSED;
+int isl_tab_push_var(struct isl_tab *tab,
 	enum isl_tab_undo_type type, struct isl_tab_var *var) WARN_UNUSED;
-isl_stat isl_tab_push_basis(struct isl_tab *tab) WARN_UNUSED;
+int isl_tab_push_basis(struct isl_tab *tab) WARN_UNUSED;
 
 struct isl_tab *isl_tab_init_samples(struct isl_tab *tab) WARN_UNUSED;
 int isl_tab_add_sample(struct isl_tab *tab,
 	__isl_take isl_vec *sample) WARN_UNUSED;
 struct isl_tab *isl_tab_drop_sample(struct isl_tab *tab, int s);
-isl_stat isl_tab_save_samples(struct isl_tab *tab) WARN_UNUSED;
+int isl_tab_save_samples(struct isl_tab *tab) WARN_UNUSED;
 
 struct isl_tab *isl_tab_detect_equalities(struct isl_tab *tab,
 	struct isl_tab *tab_cone) WARN_UNUSED;
-isl_bool isl_tab_is_constant(struct isl_tab *tab, int var, isl_int *value);
-isl_stat isl_tab_detect_constants(struct isl_tab *tab);
 
-isl_stat isl_tab_push_callback(struct isl_tab *tab,
+int isl_tab_push_callback(struct isl_tab *tab,
 	struct isl_tab_callback *callback) WARN_UNUSED;
 
-int isl_tab_insert_div(struct isl_tab *tab, int pos, __isl_keep isl_vec *div,
-	isl_stat (*add_ineq)(void *user, isl_int *), void *user);
-int isl_tab_add_div(struct isl_tab *tab, __isl_keep isl_vec *div);
+int isl_tab_add_div(struct isl_tab *tab, __isl_keep isl_vec *div,
+	int (*add_ineq)(void *user, isl_int *), void *user);
 
 int isl_tab_shift_var(struct isl_tab *tab, int pos, isl_int shift) WARN_UNUSED;
-
-isl_stat isl_tab_swap_constraints(struct isl_tab *tab, int con1, int con2);
 
 #endif

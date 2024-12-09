@@ -32,31 +32,20 @@
  */ 
 
 #include "isl_config.h"
-#undef PACKAGE
 
 #include <assert.h>
 #include <iostream>
-#include <stdlib.h>
-#include <type_traits>
 #ifdef HAVE_ADT_OWNINGPTR_H
 #include <llvm/ADT/OwningPtr.h>
 #else
 #include <memory>
 #endif
-#ifdef HAVE_LLVM_OPTION_ARG_H
-#include <llvm/Option/Arg.h>
-#endif
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/CommandLine.h>
-#ifdef HAVE_TARGETPARSER_HOST_H
-#include <llvm/TargetParser/Host.h>
-#else
 #include <llvm/Support/Host.h>
-#endif
 #include <llvm/Support/ManagedStatic.h>
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/ASTConsumer.h>
-#include <clang/Basic/Builtins.h>
 #include <clang/Basic/FileSystemOptions.h>
 #include <clang/Basic/FileManager.h>
 #include <clang/Basic/TargetOptions.h>
@@ -75,28 +64,16 @@
 #include <clang/Frontend/TextDiagnosticPrinter.h>
 #include <clang/Frontend/Utils.h>
 #include <clang/Lex/HeaderSearch.h>
-#ifdef HAVE_LEX_PREPROCESSOROPTIONS_H
-#include <clang/Lex/PreprocessorOptions.h>
-#else
-#include <clang/Frontend/PreprocessorOptions.h>
-#endif
 #include <clang/Lex/Preprocessor.h>
 #include <clang/Parse/ParseAST.h>
 #include <clang/Sema/Sema.h>
 
 #include "extract_interface.h"
-#include "generator.h"
 #include "python.h"
-#include "plain_cpp.h"
-#include "cpp_conversion.h"
-#include "template_cpp.h"
 
 using namespace std;
 using namespace clang;
 using namespace clang::driver;
-#ifdef HAVE_LLVM_OPTION_ARG_H
-using namespace llvm::opt;
-#endif
 
 #ifdef HAVE_ADT_OWNINGPTR_H
 #define unique_ptr	llvm::OwningPtr
@@ -107,11 +84,6 @@ static llvm::cl::opt<string> InputFilename(llvm::cl::Positional,
 static llvm::cl::list<string> Includes("I",
 			llvm::cl::desc("Header search path"),
 			llvm::cl::value_desc("path"), llvm::cl::Prefix);
-
-static llvm::cl::opt<string> OutputLanguage(llvm::cl::Required,
-	llvm::cl::ValueRequired, "language",
-	llvm::cl::desc("Bindings to generate"),
-	llvm::cl::value_desc("name"));
 
 static const char *ResourceDir =
 	CLANG_PREFIX "/lib/clang/" CLANG_VERSION_STRING;
@@ -145,14 +117,12 @@ static bool is_exported(Decl *decl)
 }
 
 /* Collect all types and functions that are annotated "isl_export"
- * in "exported_types" and "exported_function".  Collect all function
- * declarations in "functions".
+ * in "types" and "function".
  *
  * We currently only consider single declarations.
  */
 struct MyASTConsumer : public ASTConsumer {
-	set<RecordDecl *> exported_types;
-	set<FunctionDecl *> exported_functions;
+	set<RecordDecl *> types;
 	set<FunctionDecl *> functions;
 
 	virtual HandleTopLevelDeclReturn HandleTopLevelDecl(DeclGroupRef D) {
@@ -161,16 +131,14 @@ struct MyASTConsumer : public ASTConsumer {
 		if (!D.isSingleDecl())
 			return HandleTopLevelDeclContinue;
 		decl = D.getSingleDecl();
-		if (isa<FunctionDecl>(decl))
-			functions.insert(cast<FunctionDecl>(decl));
 		if (!is_exported(decl))
 			return HandleTopLevelDeclContinue;
 		switch (decl->getKind()) {
 		case Decl::Record:
-			exported_types.insert(cast<RecordDecl>(decl));
+			types.insert(cast<RecordDecl>(decl));
 			break;
 		case Decl::Function:
-			exported_functions.insert(cast<FunctionDecl>(decl));
+			functions.insert(cast<FunctionDecl>(decl));
 			break;
 		default:
 			break;
@@ -206,62 +174,13 @@ static Driver *construct_driver(const char *binary, DiagnosticsEngine &Diags)
 }
 #endif
 
-namespace clang { namespace driver { class Job; } }
-
-/* Clang changed its API from 3.5 to 3.6 and once more in 3.7.
- * We fix this with a simple overloaded function here.
+/* Clang changed its API from 3.5 to 3.6, we fix this with a simple overloaded
+ * function here.
  */
 struct ClangAPI {
 	static Job *command(Job *J) { return J; }
 	static Job *command(Job &J) { return &J; }
-	static Command *command(Command &C) { return &C; }
 };
-
-#ifdef CREATE_FROM_ARGS_TAKES_ARRAYREF
-
-/* Call CompilerInvocation::CreateFromArgs with the right arguments.
- * In this case, an ArrayRef<const char *>.
- */
-static void create_from_args(CompilerInvocation &invocation,
-	const ArgStringList *args, DiagnosticsEngine &Diags)
-{
-	CompilerInvocation::CreateFromArgs(invocation, *args, Diags);
-}
-
-#else
-
-/* Call CompilerInvocation::CreateFromArgs with the right arguments.
- * In this case, two "const char *" pointers.
- */
-static void create_from_args(CompilerInvocation &invocation,
-	const ArgStringList *args, DiagnosticsEngine &Diags)
-{
-	CompilerInvocation::CreateFromArgs(invocation, args->data() + 1,
-						args->data() + args->size(),
-						Diags);
-}
-
-#endif
-
-#ifdef CLANG_SYSROOT
-/* Set sysroot if required.
- *
- * If CLANG_SYSROOT is defined, then set it to this value.
- */
-static void set_sysroot(ArgStringList &args)
-{
-	args.push_back("-isysroot");
-	args.push_back(CLANG_SYSROOT);
-}
-#else
-/* Set sysroot if required.
- *
- * If CLANG_SYSROOT is not defined, then it does not need to be set.
- */
-static void set_sysroot(ArgStringList &args)
-{
-}
-#endif
 
 /* Create a CompilerInvocation object that stores the command line
  * arguments constructed by the driver.
@@ -284,11 +203,12 @@ static CompilerInvocation *construct_invocation(const char *filename,
 	if (strcmp(cmd->getCreator().getName(), "clang"))
 		return NULL;
 
-	ArgStringList args = cmd->getArguments();
-	set_sysroot(args);
+	const ArgStringList *args = &cmd->getArguments();
 
 	CompilerInvocation *invocation = new CompilerInvocation;
-	create_from_args(*invocation, &args, Diags);
+	CompilerInvocation::CreateFromArgs(*invocation, args->data() + 1,
+						args->data() + args->size(),
+						Diags);
 	return invocation;
 }
 
@@ -385,21 +305,13 @@ static void create_preprocessor(CompilerInstance *Clang)
 
 #ifdef ADDPATH_TAKES_4_ARGUMENTS
 
-/* Add "Path" to the header search options.
- *
- * Do not take into account sysroot, i.e., set ignoreSysRoot to true.
- */
 void add_path(HeaderSearchOptions &HSO, string Path)
 {
-	HSO.AddPath(Path, frontend::Angled, false, true);
+	HSO.AddPath(Path, frontend::Angled, false, false);
 }
 
 #else
 
-/* Add "Path" to the header search options.
- *
- * Do not take into account sysroot, i.e., set IsSysRootRelative to false.
- */
 void add_path(HeaderSearchOptions &HSO, string Path)
 {
 	HSO.AddPath(Path, frontend::Angled, true, false, false);
@@ -409,8 +321,7 @@ void add_path(HeaderSearchOptions &HSO, string Path)
 
 #ifdef HAVE_SETMAINFILEID
 
-template <typename T>
-static void create_main_file_id(SourceManager &SM, const T &file)
+static void create_main_file_id(SourceManager &SM, const FileEntry *file)
 {
 	SM.setMainFileID(SM.createFileID(file, SourceLocation(),
 					SrcMgr::C_User));
@@ -425,148 +336,6 @@ static void create_main_file_id(SourceManager &SM, const FileEntry *file)
 
 #endif
 
-#ifdef SETLANGDEFAULTS_TAKES_5_ARGUMENTS
-
-#include "set_lang_defaults_arg4.h"
-
-static void set_lang_defaults(CompilerInstance *Clang)
-{
-	PreprocessorOptions &PO = Clang->getPreprocessorOpts();
-	TargetOptions &TO = Clang->getTargetOpts();
-	llvm::Triple T(TO.Triple);
-	SETLANGDEFAULTS::setLangDefaults(Clang->getLangOpts(), IK_C, T,
-					    setLangDefaultsArg4(PO),
-					    LangStandard::lang_unspecified);
-}
-
-#else
-
-static void set_lang_defaults(CompilerInstance *Clang)
-{
-	CompilerInvocation::setLangDefaults(Clang->getLangOpts(), IK_C,
-					    LangStandard::lang_unspecified);
-}
-
-#endif
-
-#ifdef SETINVOCATION_TAKES_SHARED_PTR
-
-static void set_invocation(CompilerInstance *Clang,
-	CompilerInvocation *invocation)
-{
-	Clang->setInvocation(std::make_shared<CompilerInvocation>(*invocation));
-}
-
-#else
-
-static void set_invocation(CompilerInstance *Clang,
-	CompilerInvocation *invocation)
-{
-	Clang->setInvocation(invocation);
-}
-
-#endif
-
-/* Helper function for ignore_error that only gets enabled if T
- * (which is either const FileEntry * or llvm::ErrorOr<const FileEntry *>)
- * has getError method, i.e., if it is llvm::ErrorOr<const FileEntry *>.
- */
-template <class T>
-static const FileEntry *ignore_error_helper(const T obj, int,
-	int[1][sizeof(obj.getError())])
-{
-	return *obj;
-}
-
-/* Helper function for ignore_error that is always enabled,
- * but that only gets selected if the variant above is not enabled,
- * i.e., if T is const FileEntry *.
- */
-template <class T>
-static const FileEntry *ignore_error_helper(const T obj, long, void *)
-{
-	return obj;
-}
-
-/* Given either a const FileEntry * or a llvm::ErrorOr<const FileEntry *>,
- * extract out the const FileEntry *.
- */
-template <class T>
-static const FileEntry *ignore_error(const T obj)
-{
-	return ignore_error_helper(obj, 0, NULL);
-}
-
-/* This is identical to std::void_t in C++17.
- */
-template< class... >
-using void_t = void;
-
-/* A template class with value true if "T" has a getFileRef method.
- */
-template <class T, class = void>
-struct HasGetFileRef : public std::false_type {};
-template <class T>
-struct HasGetFileRef<T, ::void_t<decltype(&T::getFileRef)>> :
-    public std::true_type {};
-
-/* Return the FileEntryRef/FileEntry corresponding to the given file name
- * in the given compiler instances, ignoring any error.
- *
- * If T (= FileManager) has a getFileRef method, then call that and
- * return a FileEntryRef.
- * Otherwise, call getFile and return a FileEntry (pointer).
- */
-template <typename T,
-	typename std::enable_if<HasGetFileRef<T>::value, bool>::type = true>
-static auto getFile(T& obj, const std::string &filename)
-	-> decltype(*obj.getFileRef(filename))
-{
-	auto file = obj.getFileRef(filename);
-	assert(file);
-	return *file;
-}
-template <typename T,
-	typename std::enable_if<!HasGetFileRef<T>::value, bool>::type = true>
-static const FileEntry *getFile(T& obj, const std::string &filename)
-{
-	const FileEntry *file = ignore_error(obj.getFile(filename));
-	assert(file);
-	return file;
-}
-
-/* Create an interface generator for the selected language and
- * then use it to generate the interface.
- */
-static void generate(MyASTConsumer &consumer, SourceManager &SM)
-{
-	generator *gen;
-
-	if (OutputLanguage.compare("python") == 0) {
-		gen = new python_generator(SM, consumer.exported_types,
-			consumer.exported_functions, consumer.functions);
-	} else if (OutputLanguage.compare("cpp") == 0) {
-		gen = new plain_cpp_generator(SM, consumer.exported_types,
-			consumer.exported_functions, consumer.functions);
-	} else if (OutputLanguage.compare("cpp-checked") == 0) {
-		gen = new plain_cpp_generator(SM, consumer.exported_types,
-			consumer.exported_functions, consumer.functions, true);
-	} else if (OutputLanguage.compare("cpp-checked-conversion") == 0) {
-		gen = new cpp_conversion_generator(SM, consumer.exported_types,
-			consumer.exported_functions, consumer.functions);
-	} else if (OutputLanguage.compare("template-cpp") == 0) {
-		gen = new template_cpp_generator(SM, consumer.exported_types,
-			consumer.exported_functions, consumer.functions);
-	} else {
-		cerr << "Language '" << OutputLanguage
-		     << "' not recognized." << endl
-		     << "Not generating bindings." << endl;
-		exit(EXIT_FAILURE);
-	}
-
-	gen->generate();
-}
-
 int main(int argc, char *argv[])
 {
 	llvm::cl::ParseCommandLineOptions(argc, argv);
@@ -575,39 +344,38 @@ int main(int argc, char *argv[])
 	create_diagnostics(Clang);
 	DiagnosticsEngine &Diags = Clang->getDiagnostics();
 	Diags.setSuppressSystemWarnings(true);
-	TargetInfo *target = create_target_info(Clang, Diags);
-	Clang->setTarget(target);
-	set_lang_defaults(Clang);
 	CompilerInvocation *invocation =
 		construct_invocation(InputFilename.c_str(), Diags);
 	if (invocation)
-		set_invocation(Clang, invocation);
+		Clang->setInvocation(invocation);
 	Clang->createFileManager();
 	Clang->createSourceManager(Clang->getFileManager());
+	TargetInfo *target = create_target_info(Clang, Diags);
+	Clang->setTarget(target);
+	CompilerInvocation::setLangDefaults(Clang->getLangOpts(), IK_C,
+					    LangStandard::lang_unspecified);
 	HeaderSearchOptions &HSO = Clang->getHeaderSearchOpts();
 	LangOptions &LO = Clang->getLangOpts();
 	PreprocessorOptions &PO = Clang->getPreprocessorOpts();
 	HSO.ResourceDir = ResourceDir;
 
-	for (llvm::cl::list<string>::size_type i = 0; i < Includes.size(); ++i)
+	for (int i = 0; i < Includes.size(); ++i)
 		add_path(HSO, Includes[i]);
 
 	PO.addMacroDef("__isl_give=__attribute__((annotate(\"isl_give\")))");
 	PO.addMacroDef("__isl_keep=__attribute__((annotate(\"isl_keep\")))");
 	PO.addMacroDef("__isl_take=__attribute__((annotate(\"isl_take\")))");
 	PO.addMacroDef("__isl_export=__attribute__((annotate(\"isl_export\")))");
-	PO.addMacroDef("__isl_overload="
-	    "__attribute__((annotate(\"isl_overload\"))) "
-	    "__attribute__((annotate(\"isl_export\")))");
 	PO.addMacroDef("__isl_constructor=__attribute__((annotate(\"isl_constructor\"))) __attribute__((annotate(\"isl_export\")))");
 	PO.addMacroDef("__isl_subclass(super)=__attribute__((annotate(\"isl_subclass(\" #super \")\"))) __attribute__((annotate(\"isl_export\")))");
 
 	create_preprocessor(Clang);
 	Preprocessor &PP = Clang->getPreprocessor();
 
-	PP.getBuiltinInfo().initializeBuiltins(PP.getIdentifierTable(), LO);
+	PP.getBuiltinInfo().InitializeBuiltins(PP.getIdentifierTable(), LO);
 
-	auto file = getFile(Clang->getFileManager(), InputFilename);
+	const FileEntry *file = Clang->getFileManager().getFile(InputFilename);
+	assert(file);
 	create_main_file_id(Clang->getSourceManager(), file);
 
 	Clang->createASTContext();
@@ -618,13 +386,11 @@ int main(int argc, char *argv[])
 	ParseAST(*sema);
 	Diags.getClient()->EndSourceFile();
 
-	generate(consumer, Clang->getSourceManager());
+	generate_python(consumer.types, consumer.functions);
 
 	delete sema;
 	delete Clang;
 	llvm::llvm_shutdown();
 
-	if (Diags.hasErrorOccurred())
-		return EXIT_FAILURE;
-	return EXIT_SUCCESS;
+	return 0;
 }

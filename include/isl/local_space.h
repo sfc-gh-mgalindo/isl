@@ -2,7 +2,7 @@
 #define ISL_LOCAL_SPACE_H
 
 #include <isl/aff_type.h>
-#include <isl/space_type.h>
+#include <isl/space.h>
 #include <isl/printer.h>
 #include <isl/map_type.h>
 
@@ -15,8 +15,7 @@ typedef struct isl_local_space isl_local_space;
 
 isl_ctx *isl_local_space_get_ctx(__isl_keep isl_local_space *ls);
 
-__isl_give isl_local_space *isl_local_space_from_space(
-	__isl_take isl_space *space);
+__isl_give isl_local_space *isl_local_space_from_space(__isl_take isl_space *dim);
 
 __isl_give isl_local_space *isl_local_space_copy(
 	__isl_keep isl_local_space *ls);
@@ -30,7 +29,7 @@ __isl_give isl_local_space *isl_local_space_set_tuple_id(
 	__isl_take isl_local_space *ls,
 	enum isl_dim_type type, __isl_take isl_id *id);
 
-isl_size isl_local_space_dim(__isl_keep isl_local_space *ls,
+int isl_local_space_dim(__isl_keep isl_local_space *ls,
 	enum isl_dim_type type);
 isl_bool isl_local_space_has_dim_name(__isl_keep isl_local_space *ls,
 	enum isl_dim_type type, unsigned pos);
@@ -67,8 +66,6 @@ __isl_give isl_local_space *isl_local_space_drop_dims(
 __isl_give isl_local_space *isl_local_space_insert_dims(
 	__isl_take isl_local_space *ls,
 	enum isl_dim_type type, unsigned first, unsigned n);
-__isl_give isl_local_space *isl_local_space_set_from_params(
-	__isl_take isl_local_space *ls);
 
 __isl_give isl_local_space *isl_local_space_intersect(
 	__isl_take isl_local_space *ls1, __isl_take isl_local_space *ls2);

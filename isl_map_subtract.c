@@ -15,9 +15,6 @@
 #include <isl_point_private.h>
 #include <isl_vec_private.h>
 
-#include <set_to_map.c>
-#include <set_from_map.c>
-
 /* Expand the constraint "c" into "v".  The initial "dim" dimensions
  * are the same, but "v" may have more divs than "c" and the divs of "c"
  * may appear in different positions in "v".
@@ -46,39 +43,35 @@ static void expand_constraint(isl_vec *v, unsigned dim,
 /* Add all constraints of bmap to tab.  The equalities of bmap
  * are added as a pair of inequalities.
  */
-static isl_stat tab_add_constraints(struct isl_tab *tab,
+static int tab_add_constraints(struct isl_tab *tab,
 	__isl_keep isl_basic_map *bmap, int *div_map)
 {
 	int i;
 	unsigned dim;
-	isl_size tab_total;
-	isl_size bmap_n_div;
-	isl_size bmap_total;
+	unsigned tab_total;
+	unsigned bmap_total;
 	isl_vec *v;
 
 	if (!tab || !bmap)
-		return isl_stat_error;
+		return -1;
 
-	tab_total = isl_basic_map_dim(tab->bmap, isl_dim_all);
-	bmap_total = isl_basic_map_dim(bmap, isl_dim_all);
-	bmap_n_div = isl_basic_map_dim(bmap, isl_dim_div);
-	dim = bmap_total - bmap_n_div;
-	if (tab_total < 0 || bmap_total < 0 || bmap_n_div < 0)
-		return isl_stat_error;
+	tab_total = isl_basic_map_total_dim(tab->bmap);
+	bmap_total = isl_basic_map_total_dim(bmap);
+	dim = isl_space_dim(tab->bmap->dim, isl_dim_all);
 
 	if (isl_tab_extend_cons(tab, 2 * bmap->n_eq + bmap->n_ineq) < 0)
-		return isl_stat_error;
+		return -1;
 
 	v = isl_vec_alloc(bmap->ctx, 1 + tab_total);
 	if (!v)
-		return isl_stat_error;
+		return -1;
 
 	for (i = 0; i < bmap->n_eq; ++i) {
-		expand_constraint(v, dim, bmap->eq[i], div_map, bmap_n_div);
+		expand_constraint(v, dim, bmap->eq[i], div_map, bmap->n_div);
 		if (isl_tab_add_ineq(tab, v->el) < 0)
 			goto error;
 		isl_seq_neg(bmap->eq[i], bmap->eq[i], 1 + bmap_total);
-		expand_constraint(v, dim, bmap->eq[i], div_map, bmap_n_div);
+		expand_constraint(v, dim, bmap->eq[i], div_map, bmap->n_div);
 		if (isl_tab_add_ineq(tab, v->el) < 0)
 			goto error;
 		isl_seq_neg(bmap->eq[i], bmap->eq[i], 1 + bmap_total);
@@ -87,7 +80,7 @@ static isl_stat tab_add_constraints(struct isl_tab *tab,
 	}
 
 	for (i = 0; i < bmap->n_ineq; ++i) {
-		expand_constraint(v, dim, bmap->ineq[i], div_map, bmap_n_div);
+		expand_constraint(v, dim, bmap->ineq[i], div_map, bmap->n_div);
 		if (isl_tab_add_ineq(tab, v->el) < 0)
 			goto error;
 		if (tab->empty)
@@ -95,44 +88,36 @@ static isl_stat tab_add_constraints(struct isl_tab *tab,
 	}
 
 	isl_vec_free(v);
-	return isl_stat_ok;
+	return 0;
 error:
 	isl_vec_free(v);
-	return isl_stat_error;
+	return -1;
 }
 
 /* Add a specific constraint of bmap (or its opposite) to tab.
  * The position of the constraint is specified by "c", where
  * the equalities of bmap are counted twice, once for the inequality
  * that is equal to the equality, and once for its negation.
- *
- * Each of these constraints has been added to "tab" before by
- * tab_add_constraints (and later removed again), so there should
- * already be a row available for the constraint.
  */
-static isl_stat tab_add_constraint(struct isl_tab *tab,
+static int tab_add_constraint(struct isl_tab *tab,
 	__isl_keep isl_basic_map *bmap, int *div_map, int c, int oppose)
 {
 	unsigned dim;
-	isl_size tab_total;
-	isl_size bmap_n_div;
-	isl_size bmap_total;
+	unsigned tab_total;
+	unsigned bmap_total;
 	isl_vec *v;
-	isl_stat r;
+	int r;
 
 	if (!tab || !bmap)
-		return isl_stat_error;
+		return -1;
 
-	tab_total = isl_basic_map_dim(tab->bmap, isl_dim_all);
-	bmap_total = isl_basic_map_dim(bmap, isl_dim_all);
-	bmap_n_div = isl_basic_map_dim(bmap, isl_dim_div);
-	dim = bmap_total - bmap_n_div;
-	if (tab_total < 0 || bmap_total < 0 || bmap_n_div < 0)
-		return isl_stat_error;
+	tab_total = isl_basic_map_total_dim(tab->bmap);
+	bmap_total = isl_basic_map_total_dim(bmap);
+	dim = isl_space_dim(tab->bmap->dim, isl_dim_all);
 
 	v = isl_vec_alloc(bmap->ctx, 1 + tab_total);
 	if (!v)
-		return isl_stat_error;
+		return -1;
 
 	if (c < 2 * bmap->n_eq) {
 		if ((c % 2) != oppose)
@@ -140,7 +125,7 @@ static isl_stat tab_add_constraint(struct isl_tab *tab,
 					1 + bmap_total);
 		if (oppose)
 			isl_int_sub_ui(bmap->eq[c/2][0], bmap->eq[c/2][0], 1);
-		expand_constraint(v, dim, bmap->eq[c/2], div_map, bmap_n_div);
+		expand_constraint(v, dim, bmap->eq[c/2], div_map, bmap->n_div);
 		r = isl_tab_add_ineq(tab, v->el);
 		if (oppose)
 			isl_int_add_ui(bmap->eq[c/2][0], bmap->eq[c/2][0], 1);
@@ -154,7 +139,7 @@ static isl_stat tab_add_constraint(struct isl_tab *tab,
 					1 + bmap_total);
 			isl_int_sub_ui(bmap->ineq[c][0], bmap->ineq[c][0], 1);
 		}
-		expand_constraint(v, dim, bmap->ineq[c], div_map, bmap_n_div);
+		expand_constraint(v, dim, bmap->ineq[c], div_map, bmap->n_div);
 		r = isl_tab_add_ineq(tab, v->el);
 		if (oppose) {
 			isl_int_add_ui(bmap->ineq[c][0], bmap->ineq[c][0], 1);
@@ -167,38 +152,35 @@ static isl_stat tab_add_constraint(struct isl_tab *tab,
 	return r;
 }
 
-static isl_stat tab_add_divs(struct isl_tab *tab,
-	__isl_keep isl_basic_map *bmap, int **div_map)
+static int tab_add_divs(struct isl_tab *tab, __isl_keep isl_basic_map *bmap,
+	int **div_map)
 {
 	int i, j;
 	struct isl_vec *vec;
-	isl_size total;
+	unsigned total;
 	unsigned dim;
 
 	if (!bmap)
-		return isl_stat_error;
+		return -1;
 	if (!bmap->n_div)
-		return isl_stat_ok;
+		return 0;
 
 	if (!*div_map)
 		*div_map = isl_alloc_array(bmap->ctx, int, bmap->n_div);
 	if (!*div_map)
-		return isl_stat_error;
+		return -1;
 
-	total = isl_basic_map_dim(tab->bmap, isl_dim_all);
-	if (total < 0)
-		return isl_stat_error;
+	total = isl_basic_map_total_dim(tab->bmap);
 	dim = total - tab->bmap->n_div;
 	vec = isl_vec_alloc(bmap->ctx, 2 + total + bmap->n_div);
 	if (!vec)
-		return isl_stat_error;
+		return -1;
 
 	for (i = 0; i < bmap->n_div; ++i) {
 		isl_seq_cpy(vec->el, bmap->div[i], 2 + dim);
 		isl_seq_clr(vec->el + 2 + dim, tab->bmap->n_div);
 		for (j = 0; j < i; ++j)
-			isl_int_add(vec->el[2 + dim + (*div_map)[j]],
-				    vec->el[2 + dim + (*div_map)[j]],
+			isl_int_set(vec->el[2 + dim + (*div_map)[j]],
 					bmap->div[i][2 + dim + j]);
 		for (j = 0; j < tab->bmap->n_div; ++j)
 			if (isl_seq_eq(tab->bmap->div[j],
@@ -207,18 +189,18 @@ static isl_stat tab_add_divs(struct isl_tab *tab,
 		(*div_map)[i] = j;
 		if (j == tab->bmap->n_div) {
 			vec->size = 2 + dim + tab->bmap->n_div;
-			if (isl_tab_add_div(tab, vec) < 0)
+			if (isl_tab_add_div(tab, vec, NULL, NULL) < 0)
 				goto error;
 		}
 	}
 
 	isl_vec_free(vec);
 
-	return isl_stat_ok;
+	return 0;
 error:
 	isl_vec_free(vec);
 
-	return isl_stat_error;
+	return -1;
 }
 
 /* Freeze all constraints of tableau tab.
@@ -235,8 +217,8 @@ static int tab_freeze_constraints(struct isl_tab *tab)
 }
 
 /* Check for redundant constraints starting at offset.
- * Put the indices of the non-redundant constraints in index
- * and return the number of non-redundant constraints.
+ * Put the indices of the redundant constraints in index
+ * and return the number of redundant constraints.
  */
 static int n_non_redundant(isl_ctx *ctx, struct isl_tab *tab,
 	int offset, int **index)
@@ -272,7 +254,7 @@ static int n_non_redundant(isl_ctx *ctx, struct isl_tab *tab,
  * return a negative value.
  */
 struct isl_diff_collector {
-	isl_stat (*add)(struct isl_diff_collector *dc,
+	int (*add)(struct isl_diff_collector *dc,
 		    __isl_take isl_basic_map *bmap);
 };
 
@@ -482,7 +464,7 @@ struct isl_subtract_diff_collector {
 
 /* isl_subtract_diff_collector callback.
  */
-static isl_stat basic_map_subtract_add(struct isl_diff_collector *dc,
+static int basic_map_subtract_add(struct isl_diff_collector *dc,
 			    __isl_take isl_basic_map *bmap)
 {
 	struct isl_subtract_diff_collector *sdc;
@@ -491,7 +473,7 @@ static isl_stat basic_map_subtract_add(struct isl_diff_collector *dc,
 	sdc->diff = isl_map_union_disjoint(sdc->diff,
 			isl_map_from_basic_map(bmap));
 
-	return sdc->diff ? isl_stat_ok : isl_stat_error;
+	return sdc->diff ? 0 : -1;
 }
 
 /* Return the set difference between bmap and map.
@@ -530,17 +512,17 @@ static __isl_give isl_map *replace_pair_by_empty( __isl_take isl_map *map1,
  *
  * If "map1" and "map2" are disjoint, then simply return "map1".
  */
-__isl_give isl_map *isl_map_subtract( __isl_take isl_map *map1,
+static __isl_give isl_map *map_subtract( __isl_take isl_map *map1,
 	__isl_take isl_map *map2)
 {
 	int i;
 	int equal, disjoint;
 	struct isl_map *diff;
 
-	if (isl_map_align_params_bin(&map1, &map2) < 0)
+	if (!map1 || !map2)
 		goto error;
-	if (isl_map_check_equal_space(map1, map2) < 0)
-		goto error;
+
+	isl_assert(map1->ctx, isl_space_is_equal(map1->dim, map2->dim), goto error);
 
 	equal = isl_map_plain_is_equal(map1, map2);
 	if (equal < 0)
@@ -585,26 +567,27 @@ error:
 	return NULL;
 }
 
-__isl_give isl_set *isl_set_subtract(__isl_take isl_set *set1,
-	__isl_take isl_set *set2)
+__isl_give isl_map *isl_map_subtract( __isl_take isl_map *map1,
+	__isl_take isl_map *map2)
 {
-	return set_from_map(isl_map_subtract(set_to_map(set1),
-					    set_to_map(set2)));
+	return isl_map_align_params_map_map_and(map1, map2, &map_subtract);
+}
+
+struct isl_set *isl_set_subtract(struct isl_set *set1, struct isl_set *set2)
+{
+	return (struct isl_set *)
+		isl_map_subtract(
+			(struct isl_map *)set1, (struct isl_map *)set2);
 }
 
 /* Remove the elements of "dom" from the domain of "map".
  */
-__isl_give isl_map *isl_map_subtract_domain(__isl_take isl_map *map,
+static __isl_give isl_map *map_subtract_domain(__isl_take isl_map *map,
 	__isl_take isl_set *dom)
 {
-	isl_bool ok;
 	isl_map *ext_dom;
 
-	isl_map_align_params_set(&map, &dom);
-	ok = isl_map_compatible_domain(map, dom);
-	if (ok < 0)
-		goto error;
-	if (!ok)
+	if (!isl_map_compatible_domain(map, dom))
 		isl_die(isl_set_get_ctx(dom), isl_error_invalid,
 			"incompatible spaces", goto error);
 	
@@ -617,19 +600,20 @@ error:
 	return NULL;
 }
 
-/* Remove the elements of "dom" from the range of "map".
- */
-__isl_give isl_map *isl_map_subtract_range(__isl_take isl_map *map,
+__isl_give isl_map *isl_map_subtract_domain(__isl_take isl_map *map,
 	__isl_take isl_set *dom)
 {
-	isl_bool ok;
+	return isl_map_align_params_map_map_and(map, dom, &map_subtract_domain);
+}
+
+/* Remove the elements of "dom" from the range of "map".
+ */
+static __isl_give isl_map *map_subtract_range(__isl_take isl_map *map,
+	__isl_take isl_set *dom)
+{
 	isl_map *ext_dom;
 
-	isl_map_align_params_set(&map, &dom);
-	ok = isl_map_compatible_range(map, dom);
-	if (ok < 0)
-		goto error;
-	if (!ok)
+	if (!isl_map_compatible_range(map, dom))
 		isl_die(isl_set_get_ctx(dom), isl_error_invalid,
 			"incompatible spaces", goto error);
 	
@@ -642,8 +626,14 @@ error:
 	return NULL;
 }
 
+__isl_give isl_map *isl_map_subtract_range(__isl_take isl_map *map,
+	__isl_take isl_set *dom)
+{
+	return isl_map_align_params_map_map_and(map, dom, &map_subtract_range);
+}
+
 /* A diff collector that aborts as soon as its add function is called,
- * setting empty to isl_false.
+ * setting empty to 0.
  */
 struct isl_is_empty_diff_collector {
 	struct isl_diff_collector dc;
@@ -652,16 +642,16 @@ struct isl_is_empty_diff_collector {
 
 /* isl_is_empty_diff_collector callback.
  */
-static isl_stat basic_map_is_empty_add(struct isl_diff_collector *dc,
+static int basic_map_is_empty_add(struct isl_diff_collector *dc,
 			    __isl_take isl_basic_map *bmap)
 {
 	struct isl_is_empty_diff_collector *edc;
 	edc = (struct isl_is_empty_diff_collector *)dc;
 
-	edc->empty = isl_bool_false;
+	edc->empty = 0;
 
 	isl_basic_map_free(bmap);
-	return isl_stat_error;
+	return -1;
 }
 
 /* Check if bmap \ map is empty by computing this set difference
@@ -709,32 +699,27 @@ static isl_bool map_diff_is_empty(__isl_keep isl_map *map1,
 	return is_empty;
 }
 
-/* Return true if "bmap" contains a single element.
+/* Return 1 if "bmap" contains a single element.
  */
-isl_bool isl_basic_map_plain_is_singleton(__isl_keep isl_basic_map *bmap)
+int isl_basic_map_plain_is_singleton(__isl_keep isl_basic_map *bmap)
 {
-	isl_size total;
-
 	if (!bmap)
-		return isl_bool_error;
+		return -1;
 	if (bmap->n_div)
-		return isl_bool_false;
+		return 0;
 	if (bmap->n_ineq)
-		return isl_bool_false;
-	total = isl_basic_map_dim(bmap, isl_dim_all);
-	if (total < 0)
-		return isl_bool_error;
-	return bmap->n_eq == total;
+		return 0;
+	return bmap->n_eq == isl_basic_map_total_dim(bmap);
 }
 
-/* Return true if "map" contains a single element.
+/* Return 1 if "map" contains a single element.
  */
-isl_bool isl_map_plain_is_singleton(__isl_keep isl_map *map)
+int isl_map_plain_is_singleton(__isl_keep isl_map *map)
 {
 	if (!map)
-		return isl_bool_error;
+		return -1;
 	if (map->n != 1)
-		return isl_bool_false;
+		return 0;
 
 	return isl_basic_map_plain_is_singleton(map->p[0]);
 }
@@ -746,14 +731,14 @@ static __isl_give isl_point *singleton_extract_point(
 	__isl_keep isl_basic_map *bmap)
 {
 	int j;
-	isl_size dim;
+	unsigned dim;
 	struct isl_vec *point;
 	isl_int m;
 
-	dim = isl_basic_map_dim(bmap, isl_dim_all);
-	if (dim < 0)
+	if (!bmap)
 		return NULL;
 
+	dim = isl_basic_map_total_dim(bmap);
 	isl_assert(bmap->ctx, bmap->n_eq == dim, return NULL);
 	point = isl_vec_alloc(bmap->ctx, 1 + dim);
 	if (!point)
@@ -765,14 +750,14 @@ static __isl_give isl_point *singleton_extract_point(
 	for (j = 0; j < bmap->n_eq; ++j) {
 		int i = dim - 1 - j;
 		isl_assert(bmap->ctx,
-		    !isl_seq_any_non_zero(bmap->eq[j] + 1, i),
+		    isl_seq_first_non_zero(bmap->eq[j] + 1, i) == -1,
 		    goto error);
 		isl_assert(bmap->ctx,
 		    isl_int_is_one(bmap->eq[j][1 + i]) ||
 		    isl_int_is_negone(bmap->eq[j][1 + i]),
 		    goto error);
 		isl_assert(bmap->ctx,
-		    !isl_seq_any_non_zero(bmap->eq[j]+1+i+1, dim-i-1),
+		    isl_seq_first_non_zero(bmap->eq[j]+1+i+1, dim-i-1) == -1,
 		    goto error);
 
 		isl_int_gcd(m, point->el[0], bmap->eq[j][1 + i]);
@@ -828,8 +813,8 @@ static isl_bool map_is_subset(__isl_keep isl_map *map1,
 	__isl_keep isl_map *map2)
 {
 	isl_bool is_subset = isl_bool_false;
-	isl_bool empty, single;
-	isl_bool rat1, rat2;
+	isl_bool empty;
+	int rat1, rat2;
 
 	if (!map1 || !map2)
 		return isl_bool_error;
@@ -859,11 +844,8 @@ static isl_bool map_is_subset(__isl_keep isl_map *map1,
 	if (isl_map_plain_is_universe(map2))
 		return isl_bool_true;
 
-	single = isl_map_plain_is_singleton(map1);
-	if (single < 0)
-		return isl_bool_error;
 	map2 = isl_map_compute_divs(isl_map_copy(map2));
-	if (single) {
+	if (isl_map_plain_is_singleton(map1)) {
 		is_subset = map_is_singleton_subset(map1, map2);
 		isl_map_free(map2);
 		return is_subset;
@@ -882,7 +864,8 @@ isl_bool isl_map_is_subset(__isl_keep isl_map *map1, __isl_keep isl_map *map2)
 
 isl_bool isl_set_is_subset(__isl_keep isl_set *set1, __isl_keep isl_set *set2)
 {
-	return isl_map_is_subset(set_to_map(set1), set_to_map(set2));
+	return isl_map_is_subset(
+			(struct isl_map *)set1, (struct isl_map *)set2);
 }
 
 __isl_give isl_map *isl_map_make_disjoint(__isl_take isl_map *map)
@@ -923,7 +906,7 @@ __isl_give isl_map *isl_map_make_disjoint(__isl_take isl_map *map)
 
 __isl_give isl_set *isl_set_make_disjoint(__isl_take isl_set *set)
 {
-	return set_from_map(isl_map_make_disjoint(set_to_map(set)));
+	return (struct isl_set *)isl_map_make_disjoint((struct isl_map *)set);
 }
 
 __isl_give isl_map *isl_map_complement(__isl_take isl_map *map)

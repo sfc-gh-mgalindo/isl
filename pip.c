@@ -9,9 +9,11 @@
 
 #include <assert.h>
 #include <string.h>
+#include <strings.h>
 #include <isl_map_private.h>
 #include <isl/aff.h>
 #include <isl/set.h>
+#include "isl_tab.h"
 #include "isl_sample.h"
 #include "isl_scan.h"
 #include <isl_seq.h>
@@ -20,7 +22,6 @@
 #include <isl_point_private.h>
 #include <isl_vec_private.h>
 #include <isl/options.h>
-#include <isl_config.h>
 
 /* The input of this program is the same as that of the "example" program
  * from the PipLib distribution, except that the "big parameter column"
@@ -64,14 +65,12 @@ ISL_ARG_DEF(options, struct options, options_args)
 
 static __isl_give isl_basic_set *set_bounds(__isl_take isl_basic_set *bset)
 {
-	isl_size nparam;
+	unsigned nparam;
 	int i, r;
 	isl_point *pt, *pt2;
 	isl_basic_set *box;
 
 	nparam = isl_basic_set_dim(bset, isl_dim_param);
-	if (nparam < 0)
-		return isl_basic_set_free(bset);
 	r = nparam >= 8 ? 4 : nparam >= 5 ? 6 : 30;
 
 	pt = isl_basic_set_sample_point(isl_basic_set_copy(bset));
@@ -87,85 +86,38 @@ static __isl_give isl_basic_set *set_bounds(__isl_take isl_basic_set *bset)
 	return isl_basic_set_intersect(bset, box);
 }
 
-static __isl_give isl_basic_set *to_parameter_domain(
-	__isl_take isl_basic_set *context)
+static struct isl_basic_set *to_parameter_domain(struct isl_basic_set *context)
 {
-	isl_size dim;
-
-	dim = isl_basic_set_dim(context, isl_dim_set);
-	if (dim < 0)
-		return isl_basic_set_free(context);
 	context = isl_basic_set_move_dims(context, isl_dim_param, 0,
-		    isl_dim_set, 0, dim);
+		    isl_dim_set, 0, isl_basic_set_dim(context, isl_dim_set));
 	context = isl_basic_set_params(context);
 	return context;
 }
 
-/* If "context" has more parameters than "bset", then reinterpret
- * the last dimensions of "bset" as parameters.
- */
-static __isl_give isl_basic_set *move_parameters(__isl_take isl_basic_set *bset,
-	__isl_keep isl_basic_set *context)
-{
-	isl_size nparam, nparam_bset, dim;
-
-	nparam = isl_basic_set_dim(context, isl_dim_param);
-	nparam_bset = isl_basic_set_dim(bset, isl_dim_param);
-	if (nparam < 0 || nparam_bset < 0)
-		return isl_basic_set_free(bset);
-	if (nparam == nparam_bset)
-		return bset;
-	dim = isl_basic_set_dim(bset, isl_dim_set);
-	if (dim < 0)
-		return isl_basic_set_free(bset);
-	bset = isl_basic_set_move_dims(bset, isl_dim_param, 0,
-					    isl_dim_set, dim - nparam, nparam);
-	return bset;
-}
-
-/* Plug in the initial values of "params" for the parameters in "bset" and
- * return the result.  The remaining entries in "params", if any,
- * correspond to the existentially quantified variables in the description
- * of the original context and can be ignored.
- */
-static __isl_give isl_basic_set *plug_in_parameters(
-	__isl_take isl_basic_set *bset, __isl_take isl_vec *params)
+isl_basic_set *plug_in_parameters(isl_basic_set *bset, struct isl_vec *params)
 {
 	int i;
-	isl_size n;
 
-	n = isl_basic_set_dim(bset, isl_dim_param);
-	if (n < 0)
-		bset = isl_basic_set_free(bset);
-	for (i = 0; i < n; ++i)
+	for (i = 0; i < params->size - 1; ++i)
 		bset = isl_basic_set_fix(bset,
 					 isl_dim_param, i, params->el[1 + i]);
 
-	bset = isl_basic_set_remove_dims(bset, isl_dim_param, 0, n);
+	bset = isl_basic_set_remove_dims(bset,
+					 isl_dim_param, 0, params->size - 1);
 
 	isl_vec_free(params);
 
 	return bset;
 }
 
-/* Plug in the initial values of "params" for the parameters in "set" and
- * return the result.  The remaining entries in "params", if any,
- * correspond to the existentially quantified variables in the description
- * of the original context and can be ignored.
- */
-static __isl_give isl_set *set_plug_in_parameters(__isl_take isl_set *set,
-	__isl_take isl_vec *params)
+isl_set *set_plug_in_parameters(isl_set *set, struct isl_vec *params)
 {
 	int i;
-	isl_size n;
 
-	n = isl_set_dim(set, isl_dim_param);
-	if (n < 0)
-		set = isl_set_free(set);
-	for (i = 0; i < n; ++i)
+	for (i = 0; i < params->size - 1; ++i)
 		set = isl_set_fix(set, isl_dim_param, i, params->el[1 + i]);
 
-	set = isl_set_remove_dims(set, isl_dim_param, 0, n);
+	set = isl_set_remove_dims(set, isl_dim_param, 0, params->size - 1);
 
 	isl_vec_free(params);
 
@@ -176,32 +128,28 @@ static __isl_give isl_set *set_plug_in_parameters(__isl_take isl_set *set,
  * element of bset for the given values of the parameters, by
  * successively solving an ilp problem in each direction.
  */
-static __isl_give isl_vec *opt_at(__isl_take isl_basic_set *bset,
-	__isl_take isl_vec *params, int max)
+struct isl_vec *opt_at(struct isl_basic_set *bset,
+	struct isl_vec *params, int max)
 {
-	isl_size dim;
-	isl_ctx *ctx;
+	unsigned dim;
 	struct isl_vec *opt;
 	struct isl_vec *obj;
 	int i;
 
 	dim = isl_basic_set_dim(bset, isl_dim_set);
-	if (dim < 0)
-		goto error;
 
 	bset = plug_in_parameters(bset, params);
 
-	ctx = isl_basic_set_get_ctx(bset);
 	if (isl_basic_set_plain_is_empty(bset)) {
-		opt = isl_vec_alloc(ctx, 0);
+		opt = isl_vec_alloc(bset->ctx, 0);
 		isl_basic_set_free(bset);
 		return opt;
 	}
 
-	opt = isl_vec_alloc(ctx, 1 + dim);
+	opt = isl_vec_alloc(bset->ctx, 1 + dim);
 	assert(opt);
 
-	obj = isl_vec_alloc(ctx, 1 + dim);
+	obj = isl_vec_alloc(bset->ctx, 1 + dim);
 	assert(obj);
 
 	isl_int_set_si(opt->el[0], 1);
@@ -224,13 +172,9 @@ static __isl_give isl_vec *opt_at(__isl_take isl_basic_set *bset,
 	isl_vec_free(obj);
 
 	return opt;
-error:
-	isl_basic_set_free(bset);
-	isl_vec_free(params);
-	return NULL;
 empty:
 	isl_vec_free(opt);
-	opt = isl_vec_alloc(ctx, 0);
+	opt = isl_vec_alloc(bset->ctx, 0);
 	isl_basic_set_free(bset);
 	isl_vec_free(obj);
 
@@ -346,6 +290,7 @@ int main(int argc, char **argv)
 	int max = 0;
 	int rational = 0;
 	int n;
+	int nparam;
 	struct options *options;
 
 	options = options_new_with_defaults();
@@ -377,7 +322,12 @@ int main(int argc, char **argv)
 		context = isl_basic_set_intersect(context,
 		isl_basic_set_positive_orthant(isl_basic_set_get_space(context)));
 	context = to_parameter_domain(context);
-	bset = move_parameters(bset, context);
+	nparam = isl_basic_set_dim(context, isl_dim_param);
+	if (nparam != isl_basic_set_dim(bset, isl_dim_param)) {
+		int dim = isl_basic_set_dim(bset, isl_dim_set);
+		bset = isl_basic_set_move_dims(bset, isl_dim_param, 0,
+					    isl_dim_set, dim - nparam, nparam);
+	}
 	if (!urs_unknowns)
 		bset = isl_basic_set_intersect(bset,
 		isl_basic_set_positive_orthant(isl_basic_set_get_space(bset)));

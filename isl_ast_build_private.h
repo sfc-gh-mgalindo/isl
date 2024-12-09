@@ -50,7 +50,7 @@
  *
  * "strides" contains the stride of each loop.  The number of elements
  * is equal to the number of dimensions in "domain".
- * "offsets" contains the offsets of strided loops.  If s is the stride
+ * "offsets" constains the offsets of strided loops.  If s is the stride
  * for a given dimension and f is the corresponding offset, then the
  * dimension takes on values
  *
@@ -122,11 +122,18 @@
  * in turn only used by user code from within a callback.
  * The value is set right before we may be calling such a callback.
  *
+ * "single_valued" is set if the current inverse schedule (which may or may
+ * not be stored in "executed") is known to be single valued, specifically
+ * an inverse schedule that was not (appeared not to be) single valued
+ * is extended to a single valued inverse schedule.  This is mainly used
+ * to avoid an infinite recursion when we fail to detect later on that
+ * the extended inverse schedule is single valued.
+ *
  * "node" points to the current band node in case we are generating
  * an AST from a schedule tree.  It may be NULL if we are not generating
  * an AST from a schedule tree or if we are not inside a band node.
  *
- * "loop_type" originally contains loop AST generation types for
+ * "loop_type" originally constains loop AST generation types for
  * the "n" members of "node" and it is updated (along with "n") when
  * a schedule dimension is inserted.
  * It is NULL if "node" is NULL.
@@ -184,6 +191,7 @@ struct isl_ast_build {
 	void *create_leaf_user;
 
 	isl_union_map *executed;
+	int single_valued;
 
 	isl_schedule_node *node;
 	int n;
@@ -195,8 +203,8 @@ __isl_give isl_ast_build *isl_ast_build_clear_local_info(
 	__isl_take isl_ast_build *build);
 __isl_give isl_ast_build *isl_ast_build_increase_depth(
 	__isl_take isl_ast_build *build);
-isl_size isl_ast_build_get_depth(__isl_keep isl_ast_build *build);
-isl_size isl_ast_build_dim(__isl_keep isl_ast_build *build,
+int isl_ast_build_get_depth(__isl_keep isl_ast_build *build);
+unsigned isl_ast_build_dim(__isl_keep isl_ast_build *build,
 	enum isl_dim_type type);
 __isl_give isl_space *isl_ast_build_get_space(
 	__isl_keep isl_ast_build *build, int internal);
@@ -213,8 +221,6 @@ __isl_give isl_ast_build *isl_ast_build_product(
 	__isl_take isl_ast_build *build, __isl_take isl_space *embedding);
 __isl_give isl_ast_build *isl_ast_build_set_loop_bounds(
 	__isl_take isl_ast_build *build, __isl_take isl_basic_set *bounds);
-__isl_give isl_ast_build *isl_ast_build_set_pending_generated(
-	__isl_take isl_ast_build *build, __isl_take isl_basic_set *bounds);
 __isl_give isl_ast_build *isl_ast_build_detect_strides(
 	__isl_take isl_ast_build *build, __isl_take isl_set *set);
 __isl_give isl_ast_build *isl_ast_build_include_stride(
@@ -222,6 +228,8 @@ __isl_give isl_ast_build *isl_ast_build_include_stride(
 __isl_give isl_ast_build *isl_ast_build_set_executed(
 	__isl_take isl_ast_build *build,
 	__isl_take isl_union_map *executed);
+__isl_give isl_ast_build *isl_ast_build_set_single_valued(
+	__isl_take isl_ast_build *build, int sv);
 __isl_give isl_multi_aff *isl_ast_build_get_internal2input(
 	__isl_keep isl_ast_build *build);
 __isl_give isl_set *isl_ast_build_get_domain(
@@ -234,13 +242,15 @@ __isl_give isl_ast_build *isl_ast_build_restrict_generated(
 	__isl_take isl_ast_build *build, __isl_take isl_set *set);
 __isl_give isl_ast_build *isl_ast_build_replace_pending_by_guard(
 	__isl_take isl_ast_build *build, __isl_take isl_set *guard);
-isl_bool isl_ast_build_need_schedule_map(__isl_keep isl_ast_build *build);
+__isl_give isl_ast_build *isl_ast_build_restrict_pending(
+	__isl_take isl_ast_build *build, __isl_take isl_set *set);
+__isl_give int isl_ast_build_need_schedule_map(
+	__isl_keep isl_ast_build *build);
 __isl_give isl_multi_aff *isl_ast_build_get_schedule_map_multi_aff(
 	__isl_keep isl_ast_build *build);
 __isl_give isl_map *isl_ast_build_get_schedule_map(
 	__isl_keep isl_ast_build *build);
-isl_bool isl_ast_build_has_affine_value(__isl_keep isl_ast_build *build,
-	int pos);
+int isl_ast_build_has_affine_value(__isl_keep isl_ast_build *build, int pos);
 int isl_ast_build_has_value(__isl_keep isl_ast_build *build);
 __isl_give isl_id *isl_ast_build_get_iterator_id(
 	__isl_keep isl_ast_build *build, int pos);
@@ -260,8 +270,6 @@ int isl_ast_build_has_isolated(__isl_keep isl_ast_build *build);
 __isl_give isl_set *isl_ast_build_get_isolated(
 	__isl_keep isl_ast_build *build);
 
-__isl_give isl_basic_set *isl_ast_build_specialize_basic_set(
-	__isl_keep isl_ast_build *build, __isl_take isl_basic_set *bset);
 __isl_give isl_basic_set *isl_ast_build_compute_gist_basic_set(
 	__isl_keep isl_ast_build *build, __isl_take isl_basic_set *bset);
 __isl_give isl_set *isl_ast_build_specialize(__isl_keep isl_ast_build *build,
@@ -280,10 +288,10 @@ __isl_give isl_pw_multi_aff *isl_ast_build_compute_gist_pw_multi_aff(
 __isl_give isl_union_map *isl_ast_build_substitute_values_union_map_domain(
 	__isl_keep isl_ast_build *build, __isl_take isl_union_map *umap);
 
-isl_bool isl_ast_build_aff_is_nonneg(__isl_keep isl_ast_build *build,
+int isl_ast_build_aff_is_nonneg(__isl_keep isl_ast_build *build,
 	__isl_keep isl_aff *aff);
 
-isl_bool isl_ast_build_has_stride(__isl_keep isl_ast_build *build, int pos);
+int isl_ast_build_has_stride(__isl_keep isl_ast_build *build, int pos);
 __isl_give isl_aff *isl_ast_build_get_offset(__isl_keep isl_ast_build *build,
 	int pos);
 __isl_give isl_val *isl_ast_build_get_stride(__isl_keep isl_ast_build *build,

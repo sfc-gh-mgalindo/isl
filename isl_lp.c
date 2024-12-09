@@ -19,19 +19,15 @@
 #include <isl_val_private.h>
 #include <isl_vec_private.h>
 
-#include <bset_to_bmap.c>
-#include <set_to_map.c>
-
-static enum isl_lp_result isl_tab_solve_lp(__isl_keep isl_basic_map *bmap,
-	int maximize, isl_int *f, isl_int denom, isl_int *opt,
-	isl_int *opt_denom, __isl_give isl_vec **sol)
+enum isl_lp_result isl_tab_solve_lp(struct isl_basic_map *bmap, int maximize,
+				      isl_int *f, isl_int denom, isl_int *opt,
+				      isl_int *opt_denom,
+				      struct isl_vec **sol)
 {
 	struct isl_tab *tab;
 	enum isl_lp_result res;
-	isl_size dim = isl_basic_map_dim(bmap, isl_dim_all);
+	unsigned dim = isl_basic_map_total_dim(bmap);
 
-	if (dim < 0)
-		return isl_lp_error;
 	if (maximize)
 		isl_seq_neg(f, f, 1 + dim);
 
@@ -61,11 +57,12 @@ static enum isl_lp_result isl_tab_solve_lp(__isl_keep isl_basic_map *bmap,
  * If opt_denom is NULL, then *opt is rounded up (or down)
  * to the nearest integer.
  * The return value reflects the nature of the result (empty, unbounded,
- * minimal or maximal value returned in *opt).
+ * minmimal or maximal value returned in *opt).
  */
-enum isl_lp_result isl_basic_map_solve_lp(__isl_keep isl_basic_map *bmap,
-	int max, isl_int *f, isl_int d, isl_int *opt, isl_int *opt_denom,
-	__isl_give isl_vec **sol)
+enum isl_lp_result isl_basic_map_solve_lp(struct isl_basic_map *bmap, int max,
+				      isl_int *f, isl_int d, isl_int *opt,
+				      isl_int *opt_denom,
+				      struct isl_vec **sol)
 {
 	if (sol)
 		*sol = NULL;
@@ -76,18 +73,19 @@ enum isl_lp_result isl_basic_map_solve_lp(__isl_keep isl_basic_map *bmap,
 	return isl_tab_solve_lp(bmap, max, f, d, opt, opt_denom, sol);
 }
 
-enum isl_lp_result isl_basic_set_solve_lp(__isl_keep isl_basic_set *bset,
-	int max, isl_int *f, isl_int d, isl_int *opt, isl_int *opt_denom,
-	__isl_give isl_vec **sol)
+enum isl_lp_result isl_basic_set_solve_lp(struct isl_basic_set *bset, int max,
+				      isl_int *f, isl_int d, isl_int *opt,
+				      isl_int *opt_denom,
+				      struct isl_vec **sol)
 {
-	return isl_basic_map_solve_lp(bset_to_bmap(bset), max,
+	return isl_basic_map_solve_lp((struct isl_basic_map *)bset, max,
 					f, d, opt, opt_denom, sol);
 }
 
 enum isl_lp_result isl_map_solve_lp(__isl_keep isl_map *map, int max,
 				      isl_int *f, isl_int d, isl_int *opt,
 				      isl_int *opt_denom,
-				      __isl_give isl_vec **sol)
+				      struct isl_vec **sol)
 {
 	int i;
 	isl_int o;
@@ -108,9 +106,7 @@ enum isl_lp_result isl_map_solve_lp(__isl_keep isl_map *map, int max,
 		if (map->p[i]->n_div > max_div)
 			max_div = map->p[i]->n_div;
 	if (max_div > 0) {
-		isl_size total = isl_map_dim(map, isl_dim_all);
-		if (total < 0)
-			return isl_lp_error;
+		unsigned total = isl_space_dim(map->dim, isl_dim_all);
 		v = isl_vec_alloc(map->ctx, 1 + total + max_div);
 		if (!v)
 			return isl_lp_error;
@@ -198,9 +194,9 @@ done:
 enum isl_lp_result isl_set_solve_lp(__isl_keep isl_set *set, int max,
 				      isl_int *f, isl_int d, isl_int *opt,
 				      isl_int *opt_denom,
-				      __isl_give isl_vec **sol)
+				      struct isl_vec **sol)
 {
-	return isl_map_solve_lp(set_to_map(set), max,
+	return isl_map_solve_lp((struct isl_map *)set, max,
 					f, d, opt, opt_denom, sol);
 }
 
@@ -262,7 +258,7 @@ static __isl_give isl_val *isl_basic_set_opt_lp_val_aligned(
 	isl_mat *bset_div = NULL;
 	isl_mat *div = NULL;
 	isl_val *res;
-	isl_size bset_n_div, obj_n_div;
+	int bset_n_div, obj_n_div;
 
 	if (!bset || !obj)
 		return NULL;
@@ -274,8 +270,6 @@ static __isl_give isl_val *isl_basic_set_opt_lp_val_aligned(
 
 	bset_n_div = isl_basic_set_dim(bset, isl_dim_div);
 	obj_n_div = isl_aff_dim(obj, isl_dim_div);
-	if (bset_n_div < 0 || obj_n_div < 0)
-		return NULL;
 	if (bset_n_div == 0 && obj_n_div == 0)
 		return basic_set_opt_lp(bset, max, obj);
 
@@ -323,16 +317,13 @@ error:
 static __isl_give isl_val *isl_basic_set_opt_lp_val(
 	__isl_keep isl_basic_set *bset, int max, __isl_keep isl_aff *obj)
 {
-	isl_bool equal;
 	isl_val *res;
 
 	if (!bset || !obj)
 		return NULL;
 
-	equal = isl_basic_set_space_has_equal_params(bset, obj->ls->dim);
-	if (equal < 0)
-		return NULL;
-	if (equal)
+	if (isl_space_match(bset->dim, isl_dim_param,
+			    obj->ls->dim, isl_dim_param))
 		return isl_basic_set_opt_lp_val_aligned(bset, max, obj);
 
 	bset = isl_basic_set_copy(bset);

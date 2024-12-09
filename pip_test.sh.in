@@ -1,7 +1,6 @@
 #!/bin/sh
 
 EXEEXT=@EXEEXT@
-srcdir=@srcdir@
 
 PIP_TESTS="\
 	boulet.pip \
@@ -10,8 +9,6 @@ PIP_TESTS="\
 	esced.pip \
 	ex2.pip \
 	ex.pip \
-	exist.pip \
-	exist2.pip \
 	fimmel.pip \
 	max.pip \
 	negative.pip \

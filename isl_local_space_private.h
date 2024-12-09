@@ -12,18 +12,10 @@ struct isl_local_space {
 	isl_mat *div;
 };
 
-isl_stat isl_local_space_check_range(__isl_keep isl_local_space *ls,
-	enum isl_dim_type type, unsigned first, unsigned n);
-
-uint32_t isl_local_space_get_hash(__isl_keep isl_local_space *ls);
-
-__isl_give isl_local_space *isl_local_space_alloc(__isl_take isl_space *space,
+__isl_give isl_local_space *isl_local_space_alloc(__isl_take isl_space *dim,
 	unsigned n_div);
-__isl_give isl_local_space *isl_local_space_alloc_div(
-	__isl_take isl_space *space, __isl_take isl_mat *div);
-
-__isl_keep isl_space *isl_local_space_peek_space(
-	__isl_keep isl_local_space *ls);
+__isl_give isl_local_space *isl_local_space_alloc_div(__isl_take isl_space *dim,
+	__isl_take isl_mat *div);
 
 __isl_give isl_local_space *isl_local_space_swap_div(
 	__isl_take isl_local_space *ls, int a, int b);
@@ -34,41 +26,26 @@ int isl_mat_cmp_div(__isl_keep isl_mat *div, int i, int j);
 __isl_give isl_mat *isl_merge_divs(__isl_keep isl_mat *div1,
 	__isl_keep isl_mat *div2, int *exp1, int *exp2);
 
-isl_size isl_local_space_var_offset(__isl_keep isl_local_space *ls,
-	enum isl_dim_type type);
 unsigned isl_local_space_offset(__isl_keep isl_local_space *ls,
 	enum isl_dim_type type);
-isl_bool isl_local_space_involves_dims(__isl_keep isl_local_space *ls,
-	enum isl_dim_type type, unsigned first, unsigned n);
 
 __isl_give isl_local_space *isl_local_space_replace_divs(
 	__isl_take isl_local_space *ls, __isl_take isl_mat *div);
-isl_bool isl_local_space_div_is_marked_unknown(__isl_keep isl_local_space *ls,
-	int div);
-isl_bool isl_local_space_div_is_known(__isl_keep isl_local_space *ls, int div);
-isl_bool isl_local_space_divs_known(__isl_keep isl_local_space *ls);
+int isl_local_space_div_is_known(__isl_keep isl_local_space *ls, int div);
+int isl_local_space_divs_known(__isl_keep isl_local_space *ls);
 
-__isl_give isl_basic_set *isl_local_space_lift_basic_set(
-	__isl_take isl_local_space *ls, __isl_take isl_basic_set *bset);
-__isl_give isl_set *isl_local_space_lift_set(__isl_take isl_local_space *ls,
-	__isl_take isl_set *set);
 __isl_give isl_local_space *isl_local_space_substitute_equalities(
 	__isl_take isl_local_space *ls, __isl_take isl_basic_set *eq);
 
-isl_bool isl_local_space_is_named_or_nested(__isl_keep isl_local_space *ls,
+int isl_local_space_is_named_or_nested(__isl_keep isl_local_space *ls,
 	enum isl_dim_type type);
 
-isl_bool isl_local_space_has_equal_space(__isl_keep isl_local_space *ls1,
-	__isl_keep isl_local_space *ls2);
-
 __isl_give isl_local_space *isl_local_space_reset_space(
-	__isl_take isl_local_space *ls, __isl_take isl_space *space);
+	__isl_take isl_local_space *ls, __isl_take isl_space *dim);
 __isl_give isl_local_space *isl_local_space_realign(
 	__isl_take isl_local_space *ls, __isl_take isl_reordering *r);
 
-isl_bool isl_local_space_is_div_constraint(__isl_keep isl_local_space *ls,
-	isl_int *constraint, unsigned div);
-isl_bool isl_local_space_is_div_equality(__isl_keep isl_local_space *ls,
+int isl_local_space_is_div_constraint(__isl_keep isl_local_space *ls,
 	isl_int *constraint, unsigned div);
 
 int *isl_local_space_get_active(__isl_keep isl_local_space *ls, isl_int *l);
@@ -87,8 +64,6 @@ __isl_give isl_local_space *isl_local_space_lift(
 __isl_give isl_local_space *isl_local_space_preimage_multi_aff(
 	__isl_take isl_local_space *ls, __isl_take isl_multi_aff *ma);
 
-__isl_give isl_local_space *isl_local_space_wrapped_reverse(
-	__isl_take isl_local_space *ls);
 __isl_give isl_local_space *isl_local_space_move_dims(
 	__isl_take isl_local_space *ls,
 	enum isl_dim_type dst_type, unsigned dst_pos,
@@ -96,11 +71,5 @@ __isl_give isl_local_space *isl_local_space_move_dims(
 
 int isl_local_space_cmp(__isl_keep isl_local_space *ls1,
 	__isl_keep isl_local_space *ls2);
-
-__isl_give isl_point *isl_local_space_lift_point(__isl_take isl_local_space *ls,
-	__isl_take isl_point *pnt);
-
-isl_bool isl_local_space_has_space(__isl_keep isl_local_space *ls,
-	__isl_keep isl_space *space);
 
 #endif

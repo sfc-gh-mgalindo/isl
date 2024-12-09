@@ -21,13 +21,7 @@
 #include <isl_options_private.h>
 #include <isl_vec_private.h>
 
-#include <bset_from_bmap.c>
-#include <set_to_map.c>
-
-static __isl_give isl_vec *isl_basic_set_sample_bounded(
-	__isl_take isl_basic_set *bset);
-
-static __isl_give isl_vec *empty_sample(__isl_take isl_basic_set *bset)
+static struct isl_vec *empty_sample(struct isl_basic_set *bset)
 {
 	struct isl_vec *vec;
 
@@ -40,14 +34,12 @@ static __isl_give isl_vec *empty_sample(__isl_take isl_basic_set *bset)
  * As a special case, if bset is zero-dimensional, this
  * function creates a zero-dimensional sample point.
  */
-static __isl_give isl_vec *zero_sample(__isl_take isl_basic_set *bset)
+static struct isl_vec *zero_sample(struct isl_basic_set *bset)
 {
-	isl_size dim;
+	unsigned dim;
 	struct isl_vec *sample;
 
-	dim = isl_basic_set_dim(bset, isl_dim_all);
-	if (dim < 0)
-		goto error;
+	dim = isl_basic_set_total_dim(bset);
 	sample = isl_vec_alloc(bset->ctx, 1 + dim);
 	if (sample) {
 		isl_int_set_si(sample->el[0], 1);
@@ -55,12 +47,9 @@ static __isl_give isl_vec *zero_sample(__isl_take isl_basic_set *bset)
 	}
 	isl_basic_set_free(bset);
 	return sample;
-error:
-	isl_basic_set_free(bset);
-	return NULL;
 }
 
-static __isl_give isl_vec *interval_sample(__isl_take isl_basic_set *bset)
+static struct isl_vec *interval_sample(struct isl_basic_set *bset)
 {
 	int i;
 	isl_int t;
@@ -127,8 +116,8 @@ error:
  * in the resulting bset, using the specified recurse function,
  * and then transform the sample back to the original space.
  */
-static __isl_give isl_vec *sample_eq(__isl_take isl_basic_set *bset,
-	__isl_give isl_vec *(*recurse)(__isl_take isl_basic_set *))
+static struct isl_vec *sample_eq(struct isl_basic_set *bset,
+	struct isl_vec *(*recurse)(struct isl_basic_set *))
 {
 	struct isl_mat *T;
 	struct isl_vec *sample;
@@ -220,9 +209,6 @@ static struct isl_mat *initial_basis(struct isl_tab *tab)
 
 /* Compute the minimum of the current ("level") basis row over "tab"
  * and store the result in position "level" of "min".
- *
- * This function assumes that at least one more row and at least
- * one more element in the constraint array are available in the tableau.
  */
 static enum isl_lp_result compute_min(isl_ctx *ctx, struct isl_tab *tab,
 	__isl_keep isl_vec *min, int level)
@@ -233,9 +219,6 @@ static enum isl_lp_result compute_min(isl_ctx *ctx, struct isl_tab *tab,
 
 /* Compute the maximum of the current ("level") basis row over "tab"
  * and store the result in position "level" of "max".
- *
- * This function assumes that at least one more row and at least
- * one more element in the constraint array are available in the tableau.
  */
 static enum isl_lp_result compute_max(isl_ctx *ctx, struct isl_tab *tab,
 	__isl_keep isl_vec *max, int level)
@@ -377,8 +360,8 @@ static int greedy_search(isl_ctx *ctx, struct isl_tab *tab,
  * When ctx->opt->gbr is set to ISL_GBR_ALWAYS, then we allow the basis
  * reduction computation to return early.  That is, as soon as it
  * finds a reasonable first direction.
- */
-__isl_give isl_vec *isl_tab_sample(struct isl_tab *tab)
+ */ 
+struct isl_vec *isl_tab_sample(struct isl_tab *tab)
 {
 	unsigned dim;
 	unsigned gbr;
@@ -532,48 +515,7 @@ error:
 	return NULL;
 }
 
-static __isl_give isl_vec *sample_bounded(__isl_take isl_basic_set *bset);
-
-/* Internal data for factored_sample.
- * "sample" collects the sample and may get reset to a zero-length vector
- * signaling the absence of a sample vector.
- * "pos" is the position of the contribution of the next factor.
- */
-struct isl_factored_sample_data {
-	isl_vec *sample;
-	int pos;
-};
-
-/* isl_factorizer_every_factor_basic_set callback that extends
- * the sample in data->sample with the contribution
- * of the factor "bset".
- * If "bset" turns out to be empty, then the product is empty too and
- * no further factors need to be considered.
- */
-static isl_bool factor_sample(__isl_keep isl_basic_set *bset, void *user)
-{
-	struct isl_factored_sample_data *data = user;
-	isl_vec *sample;
-	isl_size n;
-
-	n = isl_basic_set_dim(bset, isl_dim_set);
-	if (n < 0)
-		return isl_bool_error;
-
-	sample = sample_bounded(isl_basic_set_copy(bset));
-	if (!sample)
-		return isl_bool_error;
-	if (sample->size == 0) {
-		isl_vec_free(data->sample);
-		data->sample = sample;
-		return isl_bool_false;
-	}
-	isl_seq_cpy(data->sample->el + data->pos, sample->el + 1, n);
-	isl_vec_free(sample);
-	data->pos += n;
-
-	return isl_bool_true;
-}
+static struct isl_vec *sample_bounded(struct isl_basic_set *bset);
 
 /* Compute a sample point of the given basic set, based on the given,
  * non-trivial factorization.
@@ -581,39 +523,65 @@ static isl_bool factor_sample(__isl_keep isl_basic_set *bset, void *user)
 static __isl_give isl_vec *factored_sample(__isl_take isl_basic_set *bset,
 	__isl_take isl_factorizer *f)
 {
-	struct isl_factored_sample_data data = { NULL };
+	int i, n;
+	isl_vec *sample = NULL;
 	isl_ctx *ctx;
-	isl_size total;
-	isl_bool every;
+	unsigned nparam;
+	unsigned nvar;
 
 	ctx = isl_basic_set_get_ctx(bset);
-	total = isl_basic_set_dim(bset, isl_dim_all);
-	if (!ctx || total < 0)
+	if (!ctx)
 		goto error;
 
-	data.sample = isl_vec_alloc(ctx, 1 + total);
-	if (!data.sample)
+	nparam = isl_basic_set_dim(bset, isl_dim_param);
+	nvar = isl_basic_set_dim(bset, isl_dim_set);
+
+	sample = isl_vec_alloc(ctx, 1 + isl_basic_set_total_dim(bset));
+	if (!sample)
 		goto error;
-	isl_int_set_si(data.sample->el[0], 1);
-	data.pos = 1;
+	isl_int_set_si(sample->el[0], 1);
 
-	every = isl_factorizer_every_factor_basic_set(f, &factor_sample, &data);
-	if (every < 0) {
-		data.sample = isl_vec_free(data.sample);
-	} else if (every) {
-		isl_morph *morph;
+	bset = isl_morph_basic_set(isl_morph_copy(f->morph), bset);
 
-		morph = isl_morph_inverse(isl_morph_copy(f->morph));
-		data.sample = isl_morph_vec(morph, data.sample);
+	for (i = 0, n = 0; i < f->n_group; ++i) {
+		isl_basic_set *bset_i;
+		isl_vec *sample_i;
+
+		bset_i = isl_basic_set_copy(bset);
+		bset_i = isl_basic_set_drop_constraints_involving(bset_i,
+			    nparam + n + f->len[i], nvar - n - f->len[i]);
+		bset_i = isl_basic_set_drop_constraints_involving(bset_i,
+			    nparam, n);
+		bset_i = isl_basic_set_drop(bset_i, isl_dim_set,
+			    n + f->len[i], nvar - n - f->len[i]);
+		bset_i = isl_basic_set_drop(bset_i, isl_dim_set, 0, n);
+
+		sample_i = sample_bounded(bset_i);
+		if (!sample_i)
+			goto error;
+		if (sample_i->size == 0) {
+			isl_basic_set_free(bset);
+			isl_factorizer_free(f);
+			isl_vec_free(sample);
+			return sample_i;
+		}
+		isl_seq_cpy(sample->el + 1 + nparam + n,
+			    sample_i->el + 1, f->len[i]);
+		isl_vec_free(sample_i);
+
+		n += f->len[i];
 	}
+
+	f->morph = isl_morph_inverse(f->morph);
+	sample = isl_morph_vec(isl_morph_copy(f->morph), sample);
 
 	isl_basic_set_free(bset);
 	isl_factorizer_free(f);
-	return data.sample;
+	return sample;
 error:
 	isl_basic_set_free(bset);
 	isl_factorizer_free(f);
-	isl_vec_free(data.sample);
+	isl_vec_free(sample);
 	return NULL;
 }
 
@@ -623,10 +591,10 @@ error:
  * After handling some trivial cases, we construct a tableau
  * and then use isl_tab_sample to find a sample, passing it
  * the identity matrix as initial basis.
- */
-static __isl_give isl_vec *sample_bounded(__isl_take isl_basic_set *bset)
+ */ 
+static struct isl_vec *sample_bounded(struct isl_basic_set *bset)
 {
-	isl_size dim;
+	unsigned dim;
 	struct isl_vec *sample;
 	struct isl_tab *tab = NULL;
 	isl_factorizer *f;
@@ -637,9 +605,7 @@ static __isl_give isl_vec *sample_bounded(__isl_take isl_basic_set *bset)
 	if (isl_basic_set_plain_is_empty(bset))
 		return empty_sample(bset);
 
-	dim = isl_basic_set_dim(bset, isl_dim_all);
-	if (dim < 0)
-		bset = isl_basic_set_free(bset);
+	dim = isl_basic_set_total_dim(bset);
 	if (dim == 0)
 		return zero_sample(bset);
 	if (dim == 1)
@@ -697,17 +663,17 @@ error:
  * where [1 s] is the sample value and I is the identity matrix of the
  * appropriate dimension.
  */
-static __isl_give isl_basic_set *plug_in(__isl_take isl_basic_set *bset,
-	__isl_take isl_vec *sample)
+static struct isl_basic_set *plug_in(struct isl_basic_set *bset,
+	struct isl_vec *sample)
 {
 	int i;
-	isl_size total;
+	unsigned total;
 	struct isl_mat *T;
 
-	total = isl_basic_set_dim(bset, isl_dim_all);
-	if (total < 0 || !sample)
+	if (!bset || !sample)
 		goto error;
 
+	total = isl_basic_set_total_dim(bset);
 	T = isl_mat_alloc(bset->ctx, 1 + total, 1 + total - (sample->size - 1));
 	if (!T)
 		goto error;
@@ -733,7 +699,7 @@ error:
 /* Given a basic set "bset", return any (possibly non-integer) point
  * in the basic set.
  */
-static __isl_give isl_vec *rational_sample(__isl_take isl_basic_set *bset)
+static struct isl_vec *rational_sample(struct isl_basic_set *bset)
 {
 	struct isl_tab *tab;
 	struct isl_vec *sample;
@@ -783,19 +749,20 @@ static __isl_give isl_vec *rational_sample(__isl_take isl_basic_set *bset)
  * and we only have to add the smallest negative a_i (if any)
  * instead of the sum of all negative a_i.
  */
-static __isl_give isl_basic_set *shift_cone(__isl_take isl_basic_set *cone,
-	__isl_take isl_vec *vec)
+static struct isl_basic_set *shift_cone(struct isl_basic_set *cone,
+	struct isl_vec *vec)
 {
 	int i, j, k;
-	isl_size total;
+	unsigned total;
 
 	struct isl_basic_set *shift = NULL;
 
-	total = isl_basic_set_dim(cone, isl_dim_all);
-	if (total < 0 || !vec)
+	if (!cone || !vec)
 		goto error;
 
 	isl_assert(cone->ctx, cone->n_eq == 0, goto error);
+
+	total = isl_basic_set_total_dim(cone);
 
 	shift = isl_basic_set_alloc_space(isl_basic_set_get_space(cone),
 					0, 0, cone->n_ineq);
@@ -840,10 +807,10 @@ error:
  * Then we simply round up the coordinates of x and return the
  * resulting integer point.
  */
-static __isl_give isl_vec *round_up_in_cone(__isl_take isl_vec *vec,
-	__isl_take isl_basic_set *cone, __isl_take isl_mat *U)
+static struct isl_vec *round_up_in_cone(struct isl_vec *vec,
+	struct isl_basic_set *cone, struct isl_mat *U)
 {
-	isl_size total;
+	unsigned total;
 
 	if (!vec || !cone || !U)
 		goto error;
@@ -855,9 +822,7 @@ static __isl_give isl_vec *round_up_in_cone(__isl_take isl_vec *vec,
 		return vec;
 	}
 
-	total = isl_basic_set_dim(cone, isl_dim_all);
-	if (total < 0)
-		goto error;
+	total = isl_basic_set_total_dim(cone);
 	cone = isl_basic_set_preimage(cone, U);
 	cone = isl_basic_set_remove_dims(cone, isl_dim_set,
 					 0, total - (vec->size - 1));
@@ -877,8 +842,7 @@ error:
 /* Concatenate two integer vectors, i.e., two vectors with denominator
  * (stored in element 0) equal to 1.
  */
-static __isl_give isl_vec *vec_concat(__isl_take isl_vec *vec1,
-	__isl_take isl_vec *vec2)
+static struct isl_vec *vec_concat(struct isl_vec *vec1, struct isl_vec *vec2)
 {
 	struct isl_vec *vec;
 
@@ -946,7 +910,7 @@ error:
 __isl_give isl_vec *isl_basic_set_sample_with_cone(
 	__isl_take isl_basic_set *bset, __isl_take isl_basic_set *cone)
 {
-	isl_size total;
+	unsigned total;
 	unsigned cone_dim;
 	struct isl_mat *M, *U;
 	struct isl_vec *sample;
@@ -954,11 +918,11 @@ __isl_give isl_vec *isl_basic_set_sample_with_cone(
 	struct isl_ctx *ctx;
 	struct isl_basic_set *bounded;
 
-	total = isl_basic_set_dim(cone, isl_dim_all);
-	if (!bset || total < 0)
+	if (!bset || !cone)
 		goto error;
 
 	ctx = isl_basic_set_get_ctx(bset);
+	total = isl_basic_set_total_dim(cone);
 	cone_dim = total - cone->n_eq;
 
 	M = isl_mat_sub_alloc6(ctx, cone->eq, 0, cone->n_eq, 1, total);
@@ -993,7 +957,7 @@ error:
 	return NULL;
 }
 
-static void vec_sum_of_neg(__isl_keep isl_vec *v, isl_int *s)
+static void vec_sum_of_neg(struct isl_vec *v, isl_int *s)
 {
 	int i;
 
@@ -1019,7 +983,7 @@ static void vec_sum_of_neg(__isl_keep isl_vec *v, isl_int *s)
  * entries in the last elements of "a U".
  *
  * Since we are not interested in the first entries of any of the "a U",
- * we first drop the columns of U that correspond to bounded directions.
+ * we first drop the columns of U that correpond to bounded directions.
  */
 static int tab_shift_cone(struct isl_tab *tab,
 	struct isl_tab *tab_cone, struct isl_mat *U)
@@ -1071,8 +1035,8 @@ error:
 	return -1;
 }
 
-/* Compute an initial basis for the possibly unbounded tableau "tab"
- * (storing it in tab->basis).  "tab_cone" is a tableau
+/* Compute and return an initial basis for the possibly
+ * unbounded tableau "tab".  "tab_cone" is a tableau
  * for the corresponding recession cone.
  * Additionally, add constraints to "tab" that ensure
  * that any rational value for the unbounded directions
@@ -1127,14 +1091,12 @@ int isl_tab_set_initial_basis_with_cone(struct isl_tab *tab,
  * sample_with_cone.  Otherwise, we directly perform generalized basis
  * reduction.
  */
-static __isl_give isl_vec *gbr_sample(__isl_take isl_basic_set *bset)
+static struct isl_vec *gbr_sample(struct isl_basic_set *bset)
 {
-	isl_size dim;
+	unsigned dim;
 	struct isl_basic_set *cone;
 
-	dim = isl_basic_set_dim(bset, isl_dim_all);
-	if (dim < 0)
-		goto error;
+	dim = isl_basic_set_total_dim(bset);
 
 	cone = isl_basic_set_recession_cone(isl_basic_set_copy(bset));
 	if (!cone)
@@ -1150,21 +1112,20 @@ error:
 	return NULL;
 }
 
-static __isl_give isl_vec *basic_set_sample(__isl_take isl_basic_set *bset,
-	int bounded)
+static struct isl_vec *basic_set_sample(struct isl_basic_set *bset, int bounded)
 {
-	isl_size dim;
+	struct isl_ctx *ctx;
+	unsigned dim;
 	if (!bset)
 		return NULL;
 
+	ctx = bset->ctx;
 	if (isl_basic_set_plain_is_empty(bset))
 		return empty_sample(bset);
 
-	dim = isl_basic_set_dim(bset, isl_dim_set);
-	if (dim < 0 ||
-	    isl_basic_set_check_no_params(bset) < 0 ||
-	    isl_basic_set_check_no_locals(bset) < 0)
-		goto error;
+	dim = isl_basic_set_n_dim(bset);
+	isl_assert(ctx, isl_basic_set_n_param(bset) == 0, goto error);
+	isl_assert(ctx, bset->n_div == 0, goto error);
 
 	if (bset->sample && bset->sample->size == 1 + dim) {
 		int contains = isl_basic_set_contains(bset, bset->sample);
@@ -1201,7 +1162,7 @@ __isl_give isl_vec *isl_basic_set_sample_vec(__isl_take isl_basic_set *bset)
 /* Compute an integer sample in "bset", where the caller guarantees
  * that "bset" is bounded.
  */
-__isl_give isl_vec *isl_basic_set_sample_bounded(__isl_take isl_basic_set *bset)
+struct isl_vec *isl_basic_set_sample_bounded(struct isl_basic_set *bset)
 {
 	return basic_set_sample(bset, 1);
 }
@@ -1212,7 +1173,7 @@ __isl_give isl_basic_set *isl_basic_set_from_vec(__isl_take isl_vec *vec)
 	int k;
 	struct isl_basic_set *bset = NULL;
 	struct isl_ctx *ctx;
-	isl_size dim;
+	unsigned dim;
 
 	if (!vec)
 		return NULL;
@@ -1220,9 +1181,9 @@ __isl_give isl_basic_set *isl_basic_set_from_vec(__isl_take isl_vec *vec)
 	isl_assert(ctx, vec->size != 0, goto error);
 
 	bset = isl_basic_set_alloc(ctx, 0, vec->size - 1, 0, vec->size - 1, 0);
-	dim = isl_basic_set_dim(bset, isl_dim_set);
-	if (dim < 0)
+	if (!bset)
 		goto error;
+	dim = isl_basic_set_n_dim(bset);
 	for (i = dim - 1; i >= 0; --i) {
 		k = isl_basic_set_alloc_equality(bset);
 		if (k < 0)
@@ -1253,8 +1214,6 @@ __isl_give isl_basic_map *isl_basic_map_sample(__isl_take isl_basic_map *bmap)
 		isl_vec_free(sample_vec);
 		return isl_basic_map_set_to_empty(bmap);
 	}
-	isl_vec_free(bmap->sample);
-	bmap->sample = isl_vec_copy(sample_vec);
 	bset = isl_basic_set_from_vec(sample_vec);
 	return isl_basic_map_overlying_set(bset, bmap);
 error:
@@ -1294,19 +1253,19 @@ error:
 
 __isl_give isl_basic_set *isl_set_sample(__isl_take isl_set *set)
 {
-	return bset_from_bmap(isl_map_sample(set_to_map(set)));
+	return (isl_basic_set *) isl_map_sample((isl_map *)set);
 }
 
 __isl_give isl_point *isl_basic_set_sample_point(__isl_take isl_basic_set *bset)
 {
 	isl_vec *vec;
-	isl_space *space;
+	isl_space *dim;
 
-	space = isl_basic_set_get_space(bset);
+	dim = isl_basic_set_get_space(bset);
 	bset = isl_basic_set_underlying_set(bset);
 	vec = isl_basic_set_sample_vec(bset);
 
-	return isl_point_alloc(space, vec);
+	return isl_point_alloc(dim, vec);
 }
 
 __isl_give isl_point *isl_set_sample_point(__isl_take isl_set *set)

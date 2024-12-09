@@ -1,14 +1,11 @@
 #ifndef ISL_FLOW_H
 #define ISL_FLOW_H
 
-#include <stdio.h>
-
 #include <isl/set_type.h>
 #include <isl/map_type.h>
 #include <isl/union_set_type.h>
 #include <isl/union_map_type.h>
 #include <isl/schedule.h>
-#include <isl/printer.h>
 
 #if defined(__cplusplus)
 extern "C" {
@@ -63,35 +60,26 @@ isl_stat isl_flow_foreach(__isl_keep isl_flow *deps,
 		void *user),
 	void *user);
 __isl_give isl_map *isl_flow_get_no_source(__isl_keep isl_flow *deps, int must);
-__isl_null isl_flow *isl_flow_free(__isl_take isl_flow *deps);
+void isl_flow_free(__isl_take isl_flow *deps);
 
 isl_ctx *isl_flow_get_ctx(__isl_keep isl_flow *deps);
 
-struct __isl_export isl_union_access_info;
+struct isl_union_access_info;
 typedef struct isl_union_access_info isl_union_access_info;
-struct __isl_export isl_union_flow;
+struct isl_union_flow;
 typedef struct isl_union_flow isl_union_flow;
 
-__isl_constructor
 __isl_give isl_union_access_info *isl_union_access_info_from_sink(
 	__isl_take isl_union_map *sink);
-__isl_export
 __isl_give isl_union_access_info *isl_union_access_info_set_must_source(
 	__isl_take isl_union_access_info *access,
 	__isl_take isl_union_map *must_source);
-__isl_export
 __isl_give isl_union_access_info *isl_union_access_info_set_may_source(
 	__isl_take isl_union_access_info *access,
 	__isl_take isl_union_map *may_source);
-__isl_export
-__isl_give isl_union_access_info *isl_union_access_info_set_kill(
-	__isl_take isl_union_access_info *access,
-	__isl_take isl_union_map *kill);
-__isl_export
 __isl_give isl_union_access_info *isl_union_access_info_set_schedule(
 	__isl_take isl_union_access_info *access,
 	__isl_take isl_schedule *schedule);
-__isl_export
 __isl_give isl_union_access_info *isl_union_access_info_set_schedule_map(
 	__isl_take isl_union_access_info *access,
 	__isl_take isl_union_map *schedule_map);
@@ -103,43 +91,19 @@ __isl_null isl_union_access_info *isl_union_access_info_free(
 isl_ctx *isl_union_access_info_get_ctx(
 	__isl_keep isl_union_access_info *access);
 
-__isl_give isl_union_access_info *isl_union_access_info_read_from_file(
-	isl_ctx *ctx, FILE *input);
-__isl_give isl_printer *isl_printer_print_union_access_info(
-	__isl_take isl_printer *p, __isl_keep isl_union_access_info *access);
-__isl_give char *isl_union_access_info_to_str(
-	__isl_keep isl_union_access_info *access);
-
-__isl_export
 __isl_give isl_union_flow *isl_union_access_info_compute_flow(
 	__isl_take isl_union_access_info *access);
 
 isl_ctx *isl_union_flow_get_ctx(__isl_keep isl_union_flow *flow);
-__isl_give isl_union_flow *isl_union_flow_copy(
-	__isl_keep isl_union_flow *flow);
-__isl_export
 __isl_give isl_union_map *isl_union_flow_get_must_dependence(
 	__isl_keep isl_union_flow *flow);
-__isl_export
 __isl_give isl_union_map *isl_union_flow_get_may_dependence(
 	__isl_keep isl_union_flow *flow);
-__isl_export
-__isl_give isl_union_map *isl_union_flow_get_full_must_dependence(
-	__isl_keep isl_union_flow *flow);
-__isl_export
-__isl_give isl_union_map *isl_union_flow_get_full_may_dependence(
-	__isl_keep isl_union_flow *flow);
-__isl_export
 __isl_give isl_union_map *isl_union_flow_get_must_no_source(
 	__isl_keep isl_union_flow *flow);
-__isl_export
 __isl_give isl_union_map *isl_union_flow_get_may_no_source(
 	__isl_keep isl_union_flow *flow);
 __isl_null isl_union_flow *isl_union_flow_free(__isl_take isl_union_flow *flow);
-
-__isl_give isl_printer *isl_printer_print_union_flow(
-	__isl_take isl_printer *p, __isl_keep isl_union_flow *flow);
-__isl_give char *isl_union_flow_to_str(__isl_keep isl_union_flow *flow);
 
 int isl_union_map_compute_flow(__isl_take isl_union_map *sink,
 	__isl_take isl_union_map *must_source,

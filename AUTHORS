@@ -19,53 +19,26 @@ isl was written by
 2012-2014   Ecole Normale Superieure
 	    45 rue d'Ulm, 75230 Paris
 	    France
-2014-2015   INRIA Rocquencourt
+2014	    INRIA Rocquencourt
 	    Domaine de Voluceau - Rocquencourt, B.P. 105
 	    78153 Le Chesnay
 	    France
-2015-2022   Polly Labs
-2018-2021   Cerebras Systems
-	    175 S San Antonio Rd
-	    Los Altos, CA
-	    USA
-2021-2022   Cerebras Systems
-	    1237 E Arques Ave
-	    Sunnyvale, CA
-	    USA
 
 Contributions by
 
 Mythri Alle
 Riyadh Baghdadi
 Serge Belyshev
-Basile Clement
-Albert Cohen
 Ray Donnelly
 Johannes Doerfert
-Andi Drebes
-Ron Estrin
-Clement Foyer
-Armin Groesslinger
 Tobias Grosser
-Frederik Harwath
 Alexandre Isoard
 Andreas Kloeckner
 Michael Kruse
-Manjunath Kudlur
-Alexander Matz
-Chielo Newctle
-Riccardo Mori
 Sebastian Pop
 Louis-Noel Pouchet
-Benoit Pradelle
-Uday Bondhugula
+Uday Kumar Reddy
 Andreas Simbuerger
-Tianjiao Sun
-Malhar Thakkar
-Sergei Trofimovich
-Miheer Vaidya
 Sven van Haastregt
-Matt Whitlock
-Oleksandr Zinenko
 
 The merge sort implementation was written by Jeffrey Stedfast.

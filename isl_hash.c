@@ -8,7 +8,8 @@
  */
 
 #include <stdlib.h>
-#include <isl_hash_private.h>
+#include <strings.h>
+#include <isl/hash.h>
 #include <isl/ctx.h>
 #include "isl_config.h"
 
@@ -63,9 +64,9 @@ int isl_hash_table_init(struct isl_ctx *ctx, struct isl_hash_table *table,
 
 /* Dummy comparison function that always returns false.
  */
-static isl_bool no(const void *entry, const void *val)
+static int no(const void *entry, const void *val)
 {
-	return isl_bool_false;
+	return 0;
 }
 
 /* Extend "table" to twice its size.
@@ -148,37 +149,24 @@ void isl_hash_table_free(struct isl_ctx *ctx, struct isl_hash_table *table)
 	free(table);
 }
 
-/* A dummy entry that is used by isl_hash_table_find
- * to make a distinction between a missing entry and an error condition.
- */
-static struct isl_hash_table_entry none = { 0, NULL };
-struct isl_hash_table_entry *isl_hash_table_entry_none = &none;
-
 struct isl_hash_table_entry *isl_hash_table_find(struct isl_ctx *ctx,
-			    struct isl_hash_table *table,
-			    uint32_t key_hash,
-			    isl_bool (*eq)(const void *entry, const void *val),
-			    const void *val, int reserve)
+				struct isl_hash_table *table,
+				uint32_t key_hash,
+				int (*eq)(const void *entry, const void *val),
+				const void *val, int reserve)
 {
 	size_t size;
 	uint32_t h, key_bits;
 
 	key_bits = isl_hash_bits(key_hash, table->bits);
 	size = 1 << table->bits;
-	for (h = key_bits; table->entries[h].data; h = (h+1) % size) {
-		isl_bool equal;
-
-		if (table->entries[h].hash != key_hash)
-			continue;
-		equal = eq(table->entries[h].data, val);
-		if (equal < 0)
-			return NULL;
-		if (equal)
+	for (h = key_bits; table->entries[h].data; h = (h+1) % size)
+		if (table->entries[h].hash == key_hash &&
+		    eq(table->entries[h].data, val))
 			return &table->entries[h];
-	}
 
 	if (!reserve)
-		return isl_hash_table_entry_none;
+		return NULL;
 
 	if (4 * table->n >= 3 * size) {
 		if (grow_table(ctx, table) < 0)
@@ -190,26 +178,6 @@ struct isl_hash_table_entry *isl_hash_table_find(struct isl_ctx *ctx,
 	table->entries[h].hash = key_hash;
 
 	return &table->entries[h];
-}
-
-/* Return the first entry containing data in "table".
- * Return isl_hash_table_entry_none is there is no such entry and
- * NULL on error.
- */
-struct isl_hash_table_entry *isl_hash_table_first(struct isl_hash_table *table)
-{
-	size_t size;
-	uint32_t h;
-
-	if (!table->entries)
-		return NULL;
-
-	size = 1 << table->bits;
-	for (h = 0; h < size; ++ h)
-		if (table->entries[h].data)
-			return &table->entries[h];
-
-	return isl_hash_table_entry_none;
 }
 
 isl_stat isl_hash_table_foreach(isl_ctx *ctx, struct isl_hash_table *table,
@@ -228,31 +196,6 @@ isl_stat isl_hash_table_foreach(isl_ctx *ctx, struct isl_hash_table *table,
 			return isl_stat_error;
 	
 	return isl_stat_ok;
-}
-
-/* Does "test" succeed on every (non-empty) entry of "table"?
- */
-isl_bool isl_hash_table_every(isl_ctx *ctx, struct isl_hash_table *table,
-	isl_bool (*test)(void **entry, void *user), void *user)
-{
-	size_t size;
-	uint32_t h;
-
-	if (!table->entries)
-		return isl_bool_error;
-
-	size = 1 << table->bits;
-	for (h = 0; h < size; ++ h) {
-		isl_bool r;
-
-		if (!table->entries[h].data)
-			continue;
-		r = test(&table->entries[h].data, user);
-		if (r < 0 || !r)
-			return r;
-	}
-
-	return isl_bool_true;
 }
 
 void isl_hash_table_remove(struct isl_ctx *ctx,

@@ -25,7 +25,6 @@ void isl_seq_set(isl_int *p, isl_int v, unsigned len);
 void isl_seq_set_si(isl_int *p, int v, unsigned len);
 void isl_seq_neg(isl_int *dst, isl_int *src, unsigned len);
 void isl_seq_cpy(isl_int *dst, isl_int *src, unsigned len);
-void isl_seq_sub(isl_int *dst, isl_int *src, unsigned len);
 void isl_seq_addmul(isl_int *dst, isl_int f, isl_int *src, unsigned len);
 void isl_seq_submul(isl_int *dst, isl_int f, isl_int *src, unsigned len);
 void isl_seq_swp_or_cpy(isl_int *dst, isl_int *src, unsigned len);
@@ -44,16 +43,12 @@ void isl_seq_lcm(isl_int *p, unsigned len, isl_int *lcm);
 void isl_seq_normalize(struct isl_ctx *ctx, isl_int *p, unsigned len);
 void isl_seq_inner_product(isl_int *p1, isl_int *p2, unsigned len,
 			   isl_int *prod);
-int isl_seq_any_non_zero(isl_int *p, unsigned len);
 int isl_seq_first_non_zero(isl_int *p, unsigned len);
 int isl_seq_last_non_zero(isl_int *p, unsigned len);
 int isl_seq_abs_min_non_zero(isl_int *p, unsigned len);
 int isl_seq_eq(isl_int *p1, isl_int *p2, unsigned len);
 int isl_seq_cmp(isl_int *p1, isl_int *p2, unsigned len);
 int isl_seq_is_neg(isl_int *p1, isl_int *p2, unsigned len);
-
-void isl_seq_substitute(isl_int *p, int pos, isl_int *subs,
-	int p_len, int subs_len, isl_int v);
 
 uint32_t isl_seq_get_hash(isl_int *p, unsigned len);
 uint32_t isl_seq_get_hash_bits(isl_int *p, unsigned len, unsigned bits);

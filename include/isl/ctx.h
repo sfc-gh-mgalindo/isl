@@ -30,9 +30,6 @@
 #ifndef __isl_export
 #define __isl_export
 #endif
-#ifndef __isl_overload
-#define __isl_overload
-#endif
 #ifndef __isl_constructor
 #define __isl_constructor
 #endif
@@ -83,19 +80,13 @@ enum isl_error {
 };
 typedef enum {
 	isl_stat_error = -1,
-	isl_stat_ok = 0
+	isl_stat_ok = 0,
 } isl_stat;
-isl_stat isl_stat_non_null(void *obj);
 typedef enum {
 	isl_bool_error = -1,
 	isl_bool_false = 0,
 	isl_bool_true = 1
 } isl_bool;
-isl_stat isl_stat_non_error_bool(isl_bool b);
-isl_bool isl_bool_not(isl_bool b);
-isl_bool isl_bool_ok(int b);
-typedef int	isl_size;
-#define isl_size_error	((int) -1)
 struct isl_ctx;
 typedef struct isl_ctx isl_ctx;
 
@@ -253,9 +244,6 @@ isl_stat prefix ## _set_ ## field(isl_ctx *ctx, const char *val)	\
 	ISL_CTX_SET_INT_DEF(prefix,st,args,field)
 
 enum isl_error isl_ctx_last_error(isl_ctx *ctx);
-const char *isl_ctx_last_error_msg(isl_ctx *ctx);
-const char *isl_ctx_last_error_file(isl_ctx *ctx);
-int isl_ctx_last_error_line(isl_ctx *ctx);
 void isl_ctx_reset_error(isl_ctx *ctx);
 void isl_ctx_set_error(isl_ctx *ctx, enum isl_error error);
 

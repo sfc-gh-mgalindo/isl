@@ -18,9 +18,8 @@ struct isl_scan_callback {
 		__isl_take isl_vec *sample);
 };
 
-isl_stat isl_basic_set_scan(__isl_take isl_basic_set *bset,
+int isl_basic_set_scan(struct isl_basic_set *bset,
 	struct isl_scan_callback *callback);
-isl_stat isl_set_scan(__isl_take isl_set *set,
-	struct isl_scan_callback *callback);
+int isl_set_scan(__isl_take isl_set *set, struct isl_scan_callback *callback);
 
 #endif

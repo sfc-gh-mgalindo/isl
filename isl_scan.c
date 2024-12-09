@@ -65,7 +65,7 @@ static int add_solution(struct isl_tab *tab, struct isl_scan_callback *callback)
 	return callback->add(callback, sample);
 }
 
-static isl_stat scan_0D(__isl_take isl_basic_set *bset,
+static int scan_0D(struct isl_basic_set *bset,
 	struct isl_scan_callback *callback)
 {
 	struct isl_vec *sample;
@@ -74,7 +74,7 @@ static isl_stat scan_0D(__isl_take isl_basic_set *bset,
 	isl_basic_set_free(bset);
 
 	if (!sample)
-		return isl_stat_error;
+		return -1;
 
 	isl_int_set_si(sample->el[0], 1);
 
@@ -99,10 +99,10 @@ static isl_stat scan_0D(__isl_take isl_basic_set *bset,
  * Solutions are added in the leaves of the search tree, i.e., after
  * we have fixed a value in each direction of the basis.
  */
-isl_stat isl_basic_set_scan(__isl_take isl_basic_set *bset,
+int isl_basic_set_scan(struct isl_basic_set *bset,
 	struct isl_scan_callback *callback)
 {
-	isl_size dim;
+	unsigned dim;
 	struct isl_mat *B = NULL;
 	struct isl_tab *tab = NULL;
 	struct isl_vec *min;
@@ -112,12 +112,10 @@ isl_stat isl_basic_set_scan(__isl_take isl_basic_set *bset,
 	int init;
 	enum isl_lp_result res;
 
-	dim = isl_basic_set_dim(bset, isl_dim_all);
-	if (dim < 0) {
-		bset = isl_basic_set_free(bset);
-		return isl_stat_error;
-	}
+	if (!bset)
+		return -1;
 
+	dim = isl_basic_set_total_dim(bset);
 	if (dim == 0)
 		return scan_0D(bset, callback);
 
@@ -211,7 +209,7 @@ isl_stat isl_basic_set_scan(__isl_take isl_basic_set *bset,
 	isl_vec_free(max);
 	isl_basic_set_free(bset);
 	isl_mat_free(B);
-	return isl_stat_ok;
+	return 0;
 error:
 	isl_tab_free(tab);
 	free(snap);
@@ -219,11 +217,10 @@ error:
 	isl_vec_free(max);
 	isl_basic_set_free(bset);
 	isl_mat_free(B);
-	return isl_stat_error;
+	return -1;
 }
 
-isl_stat isl_set_scan(__isl_take isl_set *set,
-	struct isl_scan_callback *callback)
+int isl_set_scan(__isl_take isl_set *set, struct isl_scan_callback *callback)
 {
 	int i;
 
@@ -242,10 +239,10 @@ isl_stat isl_set_scan(__isl_take isl_set *set,
 			goto error;
 
 	isl_set_free(set);
-	return isl_stat_ok;
+	return 0;
 error:
 	isl_set_free(set);
-	return isl_stat_error;
+	return -1;
 }
 
 int isl_basic_set_count_upto(__isl_keep isl_basic_set *bset,

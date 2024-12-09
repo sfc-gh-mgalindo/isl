@@ -35,8 +35,6 @@ struct isl_tarjan_graph {
 
 struct isl_tarjan_graph *isl_tarjan_graph_init(isl_ctx *ctx, int len,
 	isl_bool (*follows)(int i, int j, void *user), void *user);
-struct isl_tarjan_graph *isl_tarjan_graph_component(isl_ctx *ctx, int len,
-	int node, isl_bool (*follows)(int i, int j, void *user), void *user);
-struct isl_tarjan_graph *isl_tarjan_graph_free(struct isl_tarjan_graph *g);
+void isl_tarjan_graph_free(struct isl_tarjan_graph *g);
 
 #endif

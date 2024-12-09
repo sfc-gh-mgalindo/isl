@@ -14,54 +14,6 @@
 #define __isl_calloc(type,size)		((type *)calloc(1, size))
 #define __isl_calloc_type(type)		__isl_calloc(type,sizeof(type))
 
-/* Construct an isl_stat indicating whether "b" is not isl_bool_error.
- *
- * That is, return isl_stat_ok if "b" is not isl_bool_error and
- * isl_stat_error if it is.
- */
-isl_stat isl_stat_non_error_bool(isl_bool b)
-{
-	if (b < 0)
-		return isl_stat_error;
-	return isl_stat_ok;
-}
-
-/* Construct an isl_stat indicating whether "obj" is non-NULL.
- *
- * That is, return isl_stat_ok if "obj" is non_NULL and
- * isl_stat_error otherwise.
- */
-isl_stat isl_stat_non_null(void *obj)
-{
-	if (obj != NULL)
-		return isl_stat_ok;
-	return isl_stat_error;
-}
-
-/* Return the negation of "b", where the negation of isl_bool_error
- * is isl_bool_error again.
- */
-isl_bool isl_bool_not(isl_bool b)
-{
-	if (b < 0)
-		return isl_bool_error;
-	if (b == isl_bool_false)
-		return isl_bool_true;
-	return isl_bool_false;
-}
-
-/* Create an isl_bool from an integer.
- *
- * Return isl_bool_false if b is zero, otherwise return isl_bool_true.
- * This function never returns isl_bool_error.
- */
-isl_bool isl_bool_ok(int b)
-{
-	if (b)
-		return isl_bool_true;
-	return isl_bool_false;
-}
-
 /* Check that the result of an allocation ("p") is not NULL and
  * complain if it is.
  * The only exception is when allocation size ("size") is equal to zero.
@@ -125,27 +77,13 @@ void *isl_realloc_or_die(isl_ctx *ctx, void *ptr, size_t size)
 	return ctx ? check_non_null(ctx, realloc(ptr, size), size) : NULL;
 }
 
-/* Keep track of all information about the current error ("error", "msg",
- * "file", "line") in "ctx".
- */
-void isl_ctx_set_full_error(isl_ctx *ctx, enum isl_error error, const char *msg,
-	const char *file, int line)
-{
-	if (!ctx)
-		return;
-	ctx->error = error;
-	ctx->error_msg = msg;
-	ctx->error_file = file;
-	ctx->error_line = line;
-}
-
 void isl_handle_error(isl_ctx *ctx, enum isl_error error, const char *msg,
 	const char *file, int line)
 {
 	if (!ctx)
 		return;
 
-	isl_ctx_set_full_error(ctx, error, msg, file, line);
+	isl_ctx_set_error(ctx, error);
 
 	switch (ctx->opt->on_error) {
 	case ISL_ON_ERROR_WARN:
@@ -176,7 +114,7 @@ static struct isl_options *find_nested_options(struct isl_args *args,
 		if (arg->type != isl_arg_child)
 			continue;
 
-		if (arg->offset == ISL_ARG_OFFSET_NONE)
+		if (arg->offset == (size_t) -1)
 			child = opt;
 		else
 			child = *(void **)(((char *)opt) + arg->offset);
@@ -256,7 +194,7 @@ isl_ctx *isl_ctx_alloc_with_options(struct isl_args *args, void *user_opt)
 	ctx->n_cached = 0;
 	ctx->n_miss = 0;
 
-	isl_ctx_reset_error(ctx);
+	ctx->error = isl_error_none;
 
 	ctx->operations = 0;
 	isl_ctx_set_max_operations(ctx, ctx->opt->max_operations);
@@ -303,7 +241,7 @@ void isl_ctx_free(struct isl_ctx *ctx)
 		return;
 	if (ctx->ref != 0)
 		isl_die(ctx, isl_error_invalid,
-			"isl_ctx not freed as some objects still reference it",
+			"isl_ctx freed, but some objects still reference it",
 			return);
 
 	if (ctx->opt->print_stats)
@@ -332,43 +270,18 @@ struct isl_options *isl_ctx_options(isl_ctx *ctx)
 
 enum isl_error isl_ctx_last_error(isl_ctx *ctx)
 {
-	return ctx ? ctx->error : isl_error_invalid;
-}
-
-/* Return the error message of the last error in "ctx".
- */
-const char *isl_ctx_last_error_msg(isl_ctx *ctx)
-{
-	return ctx ? ctx->error_msg : NULL;
-}
-
-/* Return the file name where the last error in "ctx" occurred.
- */
-const char *isl_ctx_last_error_file(isl_ctx *ctx)
-{
-	return ctx ? ctx->error_file : NULL;
-}
-
-/* Return the line number where the last error in "ctx" occurred.
- */
-int isl_ctx_last_error_line(isl_ctx *ctx)
-{
-	return ctx ? ctx->error_line : -1;
+	return ctx->error;
 }
 
 void isl_ctx_reset_error(isl_ctx *ctx)
 {
-	if (!ctx)
-		return;
 	ctx->error = isl_error_none;
-	ctx->error_msg = NULL;
-	ctx->error_file = NULL;
-	ctx->error_line = -1;
 }
 
 void isl_ctx_set_error(isl_ctx *ctx, enum isl_error error)
 {
-	isl_ctx_set_full_error(ctx, error, NULL, NULL, -1);
+	if (ctx)
+		ctx->error = error;
 }
 
 void isl_ctx_abort(isl_ctx *ctx)

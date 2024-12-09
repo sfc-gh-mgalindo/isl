@@ -10,9 +10,6 @@
  * B.P. 105 - 78153 Le Chesnay, France
  */
 
-#include <isl/id.h>
-#include <isl/val.h>
-#include <isl/space.h>
 #include <isl/map.h>
 #include <isl/aff.h>
 #include <isl/constraint.h>
@@ -21,7 +18,6 @@
 #include <isl/union_map.h>
 #include <isl_ast_build_private.h>
 #include <isl_ast_private.h>
-#include <isl_config.h>
 
 /* Construct a map that isolates the current dimension.
  *
@@ -57,17 +53,13 @@ static __isl_give isl_ast_build *isl_ast_build_init_derived(
 {
 	isl_ctx *ctx;
 	isl_vec *strides;
-	isl_size dim;
 
 	build = isl_ast_build_cow(build);
 	if (!build || !build->domain)
 		goto error;
 
 	ctx = isl_ast_build_get_ctx(build);
-	dim = isl_space_dim(space, isl_dim_set);
-	if (dim < 0)
-		goto error;
-	strides = isl_vec_alloc(ctx, dim);
+	strides = isl_vec_alloc(ctx, isl_space_dim(space, isl_dim_set));
 	strides = isl_vec_set_si(strides, 1);
 
 	isl_vec_free(build->strides);
@@ -100,7 +92,7 @@ static __isl_give isl_id *generate_name(isl_ctx *ctx, int i,
 	__isl_keep isl_ast_build *build)
 {
 	int j;
-	char name[23];
+	char name[16];
 	isl_set *dom = build->domain;
 
 	snprintf(name, sizeof(name), "c%d", i);
@@ -118,16 +110,14 @@ static __isl_give isl_id *generate_name(isl_ctx *ctx, int i,
  */
 __isl_give isl_ast_build *isl_ast_build_from_context(__isl_take isl_set *set)
 {
-	int i;
-	isl_size n;
+	int i, n;
 	isl_ctx *ctx;
 	isl_space *space;
 	isl_ast_build *build;
 
 	set = isl_set_compute_divs(set);
-	n = isl_set_dim(set, isl_dim_set);
-	if (n < 0)
-		goto error;
+	if (!set)
+		return NULL;
 
 	ctx = isl_set_get_ctx(set);
 
@@ -140,6 +130,7 @@ __isl_give isl_ast_build *isl_ast_build_from_context(__isl_take isl_set *set)
 	build->generated = isl_set_copy(build->domain);
 	build->pending = isl_set_universe(isl_set_get_space(build->domain));
 	build->options = isl_union_map_empty(isl_space_params_alloc(ctx, 0));
+	n = isl_set_dim(set, isl_dim_set);
 	build->depth = n;
 	build->iterators = isl_id_list_alloc(ctx, n);
 	for (i = 0; i < n; ++i) {
@@ -208,6 +199,7 @@ __isl_give isl_ast_build *isl_ast_build_dup(__isl_keep isl_ast_build *build)
 	dup->strides = isl_vec_copy(build->strides);
 	dup->offsets = isl_multi_aff_copy(build->offsets);
 	dup->executed = isl_union_map_copy(build->executed);
+	dup->single_valued = build->single_valued;
 	dup->options = isl_union_map_copy(build->options);
 	dup->at_each_domain = build->at_each_domain;
 	dup->at_each_domain_user = build->at_each_domain_user;
@@ -362,16 +354,14 @@ error:
 __isl_give isl_ast_build *isl_ast_build_set_iterators(
 	__isl_take isl_ast_build *build, __isl_take isl_id_list *iterators)
 {
-	isl_size dim, n_it;
+	int dim, n_it;
 
 	build = isl_ast_build_cow(build);
 	if (!build)
 		goto error;
 
-	dim = isl_ast_build_dim(build, isl_dim_set);
+	dim = isl_set_dim(build->domain, isl_dim_set);
 	n_it = isl_id_list_n_id(build->iterators);
-	if (dim < 0 || n_it < 0)
-		goto error;
 	if (n_it < dim)
 		isl_die(isl_ast_build_get_ctx(build), isl_error_internal,
 			"isl_ast_build in inconsistent state", goto error);
@@ -568,14 +558,15 @@ static void isl_ast_build_reset_schedule_map(__isl_keep isl_ast_build *build)
  * if code has been generated for the entire schedule and if none
  * of the loops have been eliminated.
  */
-isl_bool isl_ast_build_need_schedule_map(__isl_keep isl_ast_build *build)
+__isl_give int isl_ast_build_need_schedule_map(__isl_keep isl_ast_build *build)
 {
-	isl_size dim;
+	int dim;
 
-	dim = isl_ast_build_dim(build, isl_dim_set);
-	if (dim < 0)
-		return isl_bool_error;
-	return isl_bool_ok(build->depth != dim || any_eliminated(build));
+	if (!build)
+		return -1;
+
+	dim = isl_set_dim(build->domain, isl_dim_set);
+	return build->depth != dim || any_eliminated(build);
 }
 
 /* Return a mapping from the internal schedule space to the external
@@ -599,7 +590,6 @@ isl_bool isl_ast_build_need_schedule_map(__isl_keep isl_ast_build *build)
 __isl_give isl_multi_aff *isl_ast_build_get_schedule_map_multi_aff(
 	__isl_keep isl_ast_build *build)
 {
-	isl_bool needs_map;
 	isl_space *space;
 	isl_multi_aff *ma;
 
@@ -607,19 +597,13 @@ __isl_give isl_multi_aff *isl_ast_build_get_schedule_map_multi_aff(
 		return NULL;
 	if (build->schedule_map)
 		return isl_multi_aff_copy(build->schedule_map);
-	needs_map = isl_ast_build_need_schedule_map(build);
-	if (needs_map < 0)
-		return NULL;
 
 	space = isl_ast_build_get_space(build, 1);
 	space = isl_space_map_from_set(space);
 	ma = isl_multi_aff_identity(space);
-	if (needs_map) {
+	if (isl_ast_build_need_schedule_map(build)) {
 		int i;
-		isl_size dim = isl_ast_build_dim(build, isl_dim_set);
-
-		if (dim < 0)
-			ma = isl_multi_aff_free(ma);
+		int dim = isl_set_dim(build->domain, isl_dim_set);
 		ma = isl_multi_aff_drop_dims(ma, isl_dim_out,
 					build->depth, dim - build->depth);
 		for (i = build->depth - 1; i >= 0; --i)
@@ -647,9 +631,9 @@ __isl_give isl_map *isl_ast_build_get_schedule_map(
 /* Return the position of the dimension in build->domain for which
  * an AST node is currently being generated.
  */
-isl_size isl_ast_build_get_depth(__isl_keep isl_ast_build *build)
+int isl_ast_build_get_depth(__isl_keep isl_ast_build *build)
 {
-	return build ? build->depth : isl_size_error;
+	return build ? build->depth : -1;
 }
 
 /* Prepare for generating code for the next level.
@@ -774,8 +758,7 @@ static __isl_give isl_set *intersect_stride_constraint(__isl_take isl_set *set,
 static __isl_give isl_ast_build *update_values(
 	__isl_take isl_ast_build *build, __isl_take isl_basic_set *bounds)
 {
-	isl_bool sv;
-	isl_size n;
+	int sv;
 	isl_pw_multi_aff *pma;
 	isl_aff *aff = NULL;
 	isl_map *it_map;
@@ -800,10 +783,10 @@ static __isl_give isl_ast_build *update_values(
 	build->value = isl_pw_aff_coalesce(build->value);
 	isl_pw_multi_aff_free(pma);
 
-	n = isl_pw_aff_n_piece(build->value);
-	if (n < 0)
+	if (!build->value)
 		return isl_ast_build_free(build);
-	if (n != 1)
+
+	if (isl_pw_aff_n_piece(build->value) != 1)
 		return build;
 
 	isl_pw_aff_foreach_piece(build->value, &extract_single_piece, &aff);
@@ -841,10 +824,6 @@ static __isl_give isl_ast_build *update_values(
  * Otherwise, we would indirectly intersect the build domain with itself,
  * which can lead to inefficiencies, in particular if the build domain
  * contains any unknown divs.
- *
- * The pending and generated sets are not updated by this function to
- * match the updated domain.
- * The caller still needs to call isl_ast_build_set_pending_generated.
  */
 __isl_give isl_ast_build *isl_ast_build_set_loop_bounds(
 	__isl_take isl_ast_build *build, __isl_take isl_basic_set *bounds)
@@ -855,6 +834,8 @@ __isl_give isl_ast_build *isl_ast_build_set_loop_bounds(
 	if (!build)
 		goto error;
 
+	bounds = isl_basic_set_preimage_multi_aff(bounds,
+					isl_multi_aff_copy(build->values));
 	build = update_values(build, isl_basic_set_copy(bounds));
 	if (!build)
 		goto error;
@@ -866,6 +847,18 @@ __isl_give isl_ast_build *isl_ast_build_set_loop_bounds(
 							isl_set_copy(set));
 		build->domain = isl_set_intersect(build->domain, set);
 	} else {
+		isl_basic_set *generated, *pending;
+
+		pending = isl_basic_set_copy(bounds);
+		pending = isl_basic_set_drop_constraints_involving_dims(pending,
+					isl_dim_set, build->depth, 1);
+		build->pending = isl_set_intersect(build->pending,
+					isl_set_from_basic_set(pending));
+		generated = isl_basic_set_copy(bounds);
+		generated = isl_basic_set_drop_constraints_not_involving_dims(
+				    generated, isl_dim_set, build->depth, 1);
+		build->generated = isl_set_intersect(build->generated,
+					isl_set_from_basic_set(generated));
 		build->domain = isl_set_intersect(build->domain, set);
 		build = isl_ast_build_include_stride(build);
 		if (!build)
@@ -874,49 +867,6 @@ __isl_give isl_ast_build *isl_ast_build_set_loop_bounds(
 	isl_basic_set_free(bounds);
 
 	if (!build->domain || !build->pending || !build->generated)
-		return isl_ast_build_free(build);
-
-	return build;
-error:
-	isl_ast_build_free(build);
-	isl_basic_set_free(bounds);
-	return NULL;
-}
-
-/* Update the pending and generated sets of "build" according to "bounds".
- * If the build has an affine value at the current depth,
- * then isl_ast_build_set_loop_bounds has already set the pending set.
- * Otherwise, do it here.
- */
-__isl_give isl_ast_build *isl_ast_build_set_pending_generated(
-	__isl_take isl_ast_build *build, __isl_take isl_basic_set *bounds)
-{
-	isl_basic_set *generated, *pending;
-
-	if (!build)
-		goto error;
-
-	if (isl_ast_build_has_affine_value(build, build->depth)) {
-		isl_basic_set_free(bounds);
-		return build;
-	}
-
-	build = isl_ast_build_cow(build);
-	if (!build)
-		goto error;
-
-	pending = isl_basic_set_copy(bounds);
-	pending = isl_basic_set_drop_constraints_involving_dims(pending,
-				isl_dim_set, build->depth, 1);
-	build->pending = isl_set_intersect(build->pending,
-				isl_set_from_basic_set(pending));
-	generated = bounds;
-	generated = isl_basic_set_drop_constraints_not_involving_dims(
-			    generated, isl_dim_set, build->depth, 1);
-	build->generated = isl_set_intersect(build->generated,
-				isl_set_from_basic_set(generated));
-
-	if (!build->pending || !build->generated)
 		return isl_ast_build_free(build);
 
 	return build;
@@ -999,30 +949,46 @@ __isl_give isl_ast_build *isl_ast_build_replace_pending_by_guard(
 	return build;
 }
 
+/* Intersect build->pending and build->domain with "set",
+ * where "set" is specified in terms of the internal schedule domain.
+ */
+__isl_give isl_ast_build *isl_ast_build_restrict_pending(
+	__isl_take isl_ast_build *build, __isl_take isl_set *set)
+{
+	set = isl_set_compute_divs(set);
+	build = isl_ast_build_restrict_internal(build, isl_set_copy(set));
+	build = isl_ast_build_cow(build);
+	if (!build)
+		goto error;
+
+	build->pending = isl_set_intersect(build->pending, set);
+	build->pending = isl_set_coalesce(build->pending);
+
+	if (!build->pending)
+		return isl_ast_build_free(build);
+
+	return build;
+error:
+	isl_ast_build_free(build);
+	isl_set_free(set);
+	return NULL;
+}
+
 /* Intersect build->domain with "set", where "set" is specified
  * in terms of the external schedule domain.
  */
 __isl_give isl_ast_build *isl_ast_build_restrict(
 	__isl_take isl_ast_build *build, __isl_take isl_set *set)
 {
-	isl_bool needs_map;
-
 	if (isl_set_is_params(set))
 		return isl_ast_build_restrict_generated(build, set);
 
-	needs_map = isl_ast_build_need_schedule_map(build);
-	if (needs_map < 0)
-		goto error;
-	if (needs_map) {
+	if (isl_ast_build_need_schedule_map(build)) {
 		isl_multi_aff *ma;
 		ma = isl_ast_build_get_schedule_map_multi_aff(build);
 		set = isl_set_preimage_multi_aff(set, ma);
 	}
 	return isl_ast_build_restrict_generated(build, set);
-error:
-	isl_ast_build_free(build);
-	isl_set_free(set);
-	return NULL;
 }
 
 /* Replace build->executed by "executed".
@@ -1071,22 +1037,18 @@ static __isl_give isl_ast_build *extract_loop_types(
 	__isl_take isl_ast_build *build)
 {
 	int i;
-	isl_size n;
 	isl_ctx *ctx;
 	isl_schedule_node *node;
 
 	if (!build)
 		return NULL;
-	n = isl_schedule_node_band_n_member(build->node);
-	if (n < 0)
-		return isl_ast_build_free(build);
 	ctx = isl_ast_build_get_ctx(build);
 	if (!build->node)
 		isl_die(ctx, isl_error_internal, "missing AST node",
 			return isl_ast_build_free(build));
 
 	free(build->loop_type);
-	build->n = n;
+	build->n = isl_schedule_node_band_n_member(build->node);
 	build->loop_type = isl_alloc_array(ctx,
 					    enum isl_ast_loop_type, build->n);
 	if (build->n && !build->loop_type)
@@ -1172,11 +1134,11 @@ __isl_give isl_multi_aff *isl_ast_build_get_internal2input(
 /* Return the number of variables of the given type
  * in the (internal) schedule space.
  */
-isl_size isl_ast_build_dim(__isl_keep isl_ast_build *build,
+unsigned isl_ast_build_dim(__isl_keep isl_ast_build *build,
 	enum isl_dim_type type)
 {
 	if (!build)
-		return isl_size_error;
+		return 0;
 	return isl_set_dim(build->domain, type);
 }
 
@@ -1193,8 +1155,7 @@ __isl_give isl_space *isl_ast_build_get_space(__isl_keep isl_ast_build *build,
 	int internal)
 {
 	int i;
-	isl_size dim;
-	isl_bool needs_map;
+	int dim;
 	isl_space *space;
 
 	if (!build)
@@ -1204,25 +1165,15 @@ __isl_give isl_space *isl_ast_build_get_space(__isl_keep isl_ast_build *build,
 	if (internal)
 		return space;
 
-	needs_map = isl_ast_build_need_schedule_map(build);
-	if (needs_map < 0)
-		return isl_space_free(space);
-	if (!needs_map)
+	if (!isl_ast_build_need_schedule_map(build))
 		return space;
 
-	dim = isl_ast_build_dim(build, isl_dim_set);
-	if (dim < 0)
-		return isl_space_free(space);
+	dim = isl_set_dim(build->domain, isl_dim_set);
 	space = isl_space_drop_dims(space, isl_dim_set,
 				    build->depth, dim - build->depth);
-	for (i = build->depth - 1; i >= 0; --i) {
-		isl_bool affine = isl_ast_build_has_affine_value(build, i);
-
-		if (affine < 0)
-			return isl_space_free(space);
-		if (affine)
+	for (i = build->depth - 1; i >= 0; --i)
+		if (isl_ast_build_has_affine_value(build, i))
 			space = isl_space_drop_dims(space, isl_dim_set, i, 1);
-	}
 
 	return space;
 }
@@ -1264,16 +1215,14 @@ __isl_give isl_space *isl_ast_build_get_schedule_space(
 __isl_give isl_union_map *isl_ast_build_get_schedule(
 	__isl_keep isl_ast_build *build)
 {
-	isl_bool needs_map;
 	isl_union_map *executed;
 	isl_union_map *schedule;
 
-	needs_map = isl_ast_build_need_schedule_map(build);
-	if (needs_map < 0)
+	if (!build)
 		return NULL;
 
 	executed = isl_union_map_copy(build->executed);
-	if (needs_map) {
+	if (isl_ast_build_need_schedule_map(build)) {
 		isl_map *proj = isl_ast_build_get_schedule_map(build);
 		executed = isl_union_map_apply_domain(executed,
 					isl_union_map_from_map(proj));
@@ -1296,6 +1245,30 @@ __isl_give isl_id *isl_ast_build_get_iterator_id(
 
 /* Set the stride and offset of the current dimension to the given
  * value and expression.
+ *
+ * If we had already found a stride before, then the two strides
+ * are combined into a single stride.
+ *
+ * In particular, if the new stride information is of the form
+ *
+ *	i = f + s (...)
+ *
+ * and the old stride information is of the form
+ *
+ *	i = f2 + s2 (...)
+ *
+ * then we compute the extended gcd of s and s2
+ *
+ *	a s + b s2 = g,
+ *
+ * with g = gcd(s,s2), multiply the first equation with t1 = b s2/g
+ * and the second with t2 = a s1/g.
+ * This results in
+ *
+ *	i = (b s2 + a s1)/g i = t1 f + t2 f2 + (s s2)/g (...)
+ *
+ * so that t1 f + t2 f2 is the combined offset and (s s2)/g = lcm(s,s2)
+ * is the combined stride.
  */
 static __isl_give isl_ast_build *set_stride(__isl_take isl_ast_build *build,
 	__isl_take isl_val *stride, __isl_take isl_aff *offset)
@@ -1307,6 +1280,25 @@ static __isl_give isl_ast_build *set_stride(__isl_take isl_ast_build *build,
 		goto error;
 
 	pos = build->depth;
+
+	if (isl_ast_build_has_stride(build, pos)) {
+		isl_val *stride2, *a, *b, *g;
+		isl_aff *offset2;
+
+		stride2 = isl_vec_get_element_val(build->strides, pos);
+		g = isl_val_gcdext(isl_val_copy(stride), isl_val_copy(stride2),
+					&a, &b);
+		a = isl_val_mul(a, isl_val_copy(stride));
+		a = isl_val_div(a, isl_val_copy(g));
+		stride2 = isl_val_div(stride2, g);
+		b = isl_val_mul(b, isl_val_copy(stride2));
+		stride = isl_val_mul(stride, stride2);
+
+		offset2 = isl_multi_aff_get_aff(build->offsets, pos);
+		offset2 = isl_aff_scale_val(offset2, a);
+		offset = isl_aff_scale_val(offset, b);
+		offset = isl_aff_add(offset, offset2);
+	}
 
 	build->strides = isl_vec_set_element_val(build->strides, pos, stride);
 	build->offsets = isl_multi_aff_set_aff(build->offsets, pos, offset);
@@ -1372,14 +1364,14 @@ __isl_give isl_multi_aff *isl_ast_build_get_stride_expansion(
 {
 	isl_space *space;
 	isl_multi_aff *ma;
-	isl_size pos;
+	int pos;
 	isl_aff *aff, *offset;
 	isl_val *stride;
 
-	pos = isl_ast_build_get_depth(build);
-	if (pos < 0)
+	if (!build)
 		return NULL;
 
+	pos = isl_ast_build_get_depth(build);
 	space = isl_ast_build_get_space(build, 1);
 	space = isl_space_map_from_set(space);
 	ma = isl_multi_aff_identity(space);
@@ -1423,70 +1415,177 @@ __isl_give isl_ast_build *isl_ast_build_include_stride(
 	return build;
 }
 
+/* Information used inside detect_stride.
+ *
+ * "build" may be updated by detect_stride to include stride information.
+ * "pos" is equal to build->depth.
+ */
+struct isl_detect_stride_data {
+	isl_ast_build *build;
+	int pos;
+};
+
+/* Check if constraint "c" imposes any stride on dimension data->pos
+ * and, if so, update the stride information in data->build.
+ *
+ * In order to impose a stride on the dimension, "c" needs to be an equality
+ * and it needs to involve the dimension.  Note that "c" may also be
+ * a div constraint and thus an inequality that we cannot use.
+ *
+ * Let c be of the form
+ *
+ *	h(p) + g * v * i + g * stride * f(alpha) = 0
+ *
+ * with h(p) an expression in terms of the parameters and outer dimensions
+ * and f(alpha) an expression in terms of the existentially quantified
+ * variables.  Note that the inner dimensions have been eliminated so
+ * they do not appear in "c".
+ *
+ * If "stride" is not zero and not one, then it represents a non-trivial stride
+ * on "i".  We compute a and b such that
+ *
+ *	a v + b stride = 1
+ *
+ * We have
+ *
+ *	g v i = -h(p) + g stride f(alpha)
+ *
+ *	a g v i = -a h(p) + g stride f(alpha)
+ *
+ *	a g v i + b g stride i = -a h(p) + g stride * (...)
+ *
+ *	g i = -a h(p) + g stride * (...)
+ *
+ *	i = -a h(p)/g + stride * (...)
+ *
+ * The expression "-a h(p)/g" can therefore be used as offset.
+ */
+static isl_stat detect_stride(__isl_take isl_constraint *c, void *user)
+{
+	struct isl_detect_stride_data *data = user;
+	int i, n_div;
+	isl_ctx *ctx;
+	isl_val *v, *stride, *m;
+
+	if (!isl_constraint_is_equality(c) ||
+	    !isl_constraint_involves_dims(c, isl_dim_set, data->pos, 1)) {
+		isl_constraint_free(c);
+		return isl_stat_ok;
+	}
+
+	ctx = isl_constraint_get_ctx(c);
+	stride = isl_val_zero(ctx);
+	n_div = isl_constraint_dim(c, isl_dim_div);
+	for (i = 0; i < n_div; ++i) {
+		v = isl_constraint_get_coefficient_val(c, isl_dim_div, i);
+		stride = isl_val_gcd(stride, v);
+	}
+
+	v = isl_constraint_get_coefficient_val(c, isl_dim_set, data->pos);
+	m = isl_val_gcd(isl_val_copy(stride), isl_val_copy(v));
+	stride = isl_val_div(stride, isl_val_copy(m));
+	v = isl_val_div(v, isl_val_copy(m));
+
+	if (!isl_val_is_zero(stride) && !isl_val_is_one(stride)) {
+		isl_aff *aff;
+		isl_val *gcd, *a, *b;
+
+		gcd = isl_val_gcdext(v, isl_val_copy(stride), &a, &b);
+		isl_val_free(gcd);
+		isl_val_free(b);
+
+		aff = isl_constraint_get_aff(c);
+		for (i = 0; i < n_div; ++i)
+			aff = isl_aff_set_coefficient_si(aff,
+							 isl_dim_div, i, 0);
+		aff = isl_aff_set_coefficient_si(aff, isl_dim_in, data->pos, 0);
+		a = isl_val_neg(a);
+		aff = isl_aff_scale_val(aff, a);
+		aff = isl_aff_scale_down_val(aff, m);
+		data->build = set_stride(data->build, stride, aff);
+	} else {
+		isl_val_free(stride);
+		isl_val_free(m);
+		isl_val_free(v);
+	}
+
+	isl_constraint_free(c);
+	return isl_stat_ok;
+}
+
 /* Check if the constraints in "set" imply any stride on the current
  * dimension and, if so, record the stride information in "build"
  * and return the updated "build".
+ *
+ * We compute the affine hull and then check if any of the constraints
+ * in the hull imposes any stride on the current dimension.
  *
  * We assume that inner dimensions have been eliminated from "set"
  * by the caller.  This is needed because the common stride
  * may be imposed by different inner dimensions on different parts of
  * the domain.
- * The assumption ensures that the lower bound does not depend
- * on inner dimensions.
  */
 __isl_give isl_ast_build *isl_ast_build_detect_strides(
 	__isl_take isl_ast_build *build, __isl_take isl_set *set)
 {
-	isl_size pos;
-	isl_bool no_stride;
-	isl_val *stride;
-	isl_aff *offset;
-	isl_stride_info *si;
+	isl_basic_set *hull;
+	struct isl_detect_stride_data data;
 
-	pos = isl_ast_build_get_depth(build);
-	if (pos < 0)
+	if (!build)
 		goto error;
 
-	si = isl_set_get_stride_info(set, pos);
-	stride = isl_stride_info_get_stride(si);
-	offset = isl_stride_info_get_offset(si);
-	isl_stride_info_free(si);
-	isl_set_free(set);
+	data.build = build;
+	data.pos = isl_ast_build_get_depth(build);
+	hull = isl_set_affine_hull(set);
 
-	no_stride = isl_val_is_one(stride);
-	if (no_stride >= 0 && !no_stride)
-		return set_stride(build, stride, offset);
-	isl_val_free(stride);
-	isl_aff_free(offset);
-	if (no_stride < 0)
-		return isl_ast_build_free(build);
-	return build;
+	if (isl_basic_set_foreach_constraint(hull, &detect_stride, &data) < 0)
+		data.build = isl_ast_build_free(data.build);
+
+	isl_basic_set_free(hull);
+	return data.build;
 error:
 	isl_set_free(set);
 	return NULL;
 }
 
-/* Does "map" not involve the input dimension data->depth?
- */
-static isl_bool free_of_depth(__isl_keep isl_map *map, void *user)
-{
-	int *depth = user;
+struct isl_ast_build_involves_data {
+	int depth;
+	int involves;
+};
 
-	return isl_bool_not(isl_map_involves_dims(map, isl_dim_in, *depth, 1));
+/* Check if "map" involves the input dimension data->depth.
+ */
+static isl_stat involves_depth(__isl_take isl_map *map, void *user)
+{
+	struct isl_ast_build_involves_data *data = user;
+
+	data->involves = isl_map_involves_dims(map, isl_dim_in, data->depth, 1);
+	isl_map_free(map);
+
+	if (data->involves < 0 || data->involves)
+		return isl_stat_error;
+	return isl_stat_ok;
 }
 
 /* Do any options depend on the value of the dimension at the current depth?
  */
 int isl_ast_build_options_involve_depth(__isl_keep isl_ast_build *build)
 {
-	isl_bool free;
+	struct isl_ast_build_involves_data data;
 
 	if (!build)
 		return -1;
 
-	free = isl_union_map_every_map(build->options, &free_of_depth,
-					&build->depth);
-	return isl_bool_not(free);
+	data.depth = build->depth;
+	data.involves = 0;
+
+	if (isl_union_map_foreach_map(build->options,
+					&involves_depth, &data) < 0) {
+		if (data.involves < 0 || !data.involves)
+			return -1;
+	}
+
+	return data.involves;
 }
 
 /* Construct the map
@@ -1837,7 +1936,7 @@ __isl_give isl_ast_build *isl_ast_build_product(
 	isl_vec *strides;
 	isl_set *set;
 	isl_multi_aff *embedding;
-	isl_size dim, space_dim, n_it;
+	int dim, n_it;
 
 	build = isl_ast_build_cow(build);
 	if (!build)
@@ -1846,12 +1945,9 @@ __isl_give isl_ast_build *isl_ast_build_product(
 	build->outer_pos = build->depth;
 
 	ctx = isl_ast_build_get_ctx(build);
-	dim = isl_ast_build_dim(build, isl_dim_set);
-	space_dim = isl_space_dim(space, isl_dim_set);
+	dim = isl_set_dim(build->domain, isl_dim_set);
+	dim += isl_space_dim(space, isl_dim_set);
 	n_it = isl_id_list_n_id(build->iterators);
-	if (dim < 0 || space_dim < 0 || n_it < 0)
-		goto error;
-	dim += space_dim;
 	if (n_it < dim) {
 		isl_id_list *l;
 		l = generate_names(ctx, dim - n_it, n_it, build);
@@ -1866,7 +1962,7 @@ __isl_give isl_ast_build *isl_ast_build_product(
 	build->pending = isl_set_product(build->pending, isl_set_copy(set));
 	build->generated = isl_set_product(build->generated, set);
 
-	strides = isl_vec_alloc(ctx, space_dim);
+	strides = isl_vec_alloc(ctx, isl_space_dim(space, isl_dim_set));
 	strides = isl_vec_set_si(strides, 1);
 	build->strides = isl_vec_concat(build->strides, strides);
 
@@ -1909,14 +2005,14 @@ error:
 /* Does "aff" only attain non-negative values over build->domain?
  * That is, does it not attain any negative values?
  */
-isl_bool isl_ast_build_aff_is_nonneg(__isl_keep isl_ast_build *build,
+int isl_ast_build_aff_is_nonneg(__isl_keep isl_ast_build *build,
 	__isl_keep isl_aff *aff)
 {
 	isl_set *test;
-	isl_bool empty;
+	int empty;
 
 	if (!build)
-		return isl_bool_error;
+		return -1;
 
 	aff = isl_aff_copy(aff);
 	test = isl_set_from_basic_set(isl_aff_neg_basic_set(aff));
@@ -1929,16 +2025,18 @@ isl_bool isl_ast_build_aff_is_nonneg(__isl_keep isl_ast_build *build,
 
 /* Does the dimension at (internal) position "pos" have a non-trivial stride?
  */
-isl_bool isl_ast_build_has_stride(__isl_keep isl_ast_build *build, int pos)
+int isl_ast_build_has_stride(__isl_keep isl_ast_build *build, int pos)
 {
 	isl_val *v;
-	isl_bool has_stride;
+	int has_stride;
 
 	if (!build)
-		return isl_bool_error;
+		return -1;
 
 	v = isl_vec_get_element_val(build->strides, pos);
-	has_stride = isl_bool_not(isl_val_is_one(v));
+	if (!v)
+		return -1;
+	has_stride = !isl_val_is_one(v);
 	isl_val_free(v);
 
 	return has_stride;
@@ -1948,7 +2046,7 @@ isl_bool isl_ast_build_has_stride(__isl_keep isl_ast_build *build, int pos)
  *
  *	f + s a
  *
- * with a an integer, return s.
+ * with a an integer, return s through *stride.
  */
 __isl_give isl_val *isl_ast_build_get_stride(__isl_keep isl_ast_build *build,
 	int pos)
@@ -1983,20 +2081,23 @@ __isl_give isl_aff *isl_ast_build_get_offset(
  * Otherwise, it is set to the requested expression in terms of
  * outer dimensions and parameters.
  */
-isl_bool isl_ast_build_has_affine_value(__isl_keep isl_ast_build *build,
+int isl_ast_build_has_affine_value(__isl_keep isl_ast_build *build,
 	int pos)
 {
 	isl_aff *aff;
-	isl_bool involves;
+	int involves;
 
 	if (!build)
-		return isl_bool_error;
+		return -1;
 
 	aff = isl_multi_aff_get_aff(build->values, pos);
 	involves = isl_aff_involves_dims(aff, isl_dim_in, pos, 1);
 	isl_aff_free(aff);
 
-	return isl_bool_not(involves);
+	if (involves < 0)
+		return -1;
+
+	return !involves;
 }
 
 /* Plug in the known values (fixed affine expressions in terms of
@@ -2088,18 +2189,6 @@ __isl_give isl_set *isl_ast_build_specialize(__isl_keep isl_ast_build *build,
 		return isl_set_free(set);
 
 	return isl_set_preimage_multi_aff(set,
-					isl_multi_aff_copy(build->values));
-}
-
-/* Plug in the known affine values of outer loop iterators in "bset".
- */
-__isl_give isl_basic_set *isl_ast_build_specialize_basic_set(
-	__isl_keep isl_ast_build *build, __isl_take isl_basic_set *bset)
-{
-	if (!build)
-		return isl_basic_set_free(bset);
-
-	return isl_basic_set_preimage_multi_aff(bset,
 					isl_multi_aff_copy(build->values));
 }
 
@@ -2280,6 +2369,9 @@ enum isl_ast_loop_type isl_ast_build_get_loop_type(
 __isl_give isl_ast_build *isl_ast_build_extract_isolated(
 	__isl_take isl_ast_build *build)
 {
+	isl_space *space, *space2;
+	isl_union_set *options;
+	int n, n2;
 	isl_set *isolated;
 
 	if (!build)
@@ -2293,7 +2385,27 @@ __isl_give isl_ast_build *isl_ast_build_extract_isolated(
 	if (!build)
 		return NULL;
 
-	isolated = isl_schedule_node_band_get_ast_isolate_option(build->node);
+	options = isl_schedule_node_band_get_ast_build_options(build->node);
+
+	space = isl_multi_aff_get_space(build->internal2input);
+	space = isl_space_range(space);
+	space2 = isl_set_get_space(build->domain);
+	if (isl_space_is_wrapping(space2))
+		space2 = isl_space_range(isl_space_unwrap(space2));
+	n2 = isl_space_dim(space2, isl_dim_set);
+	n = isl_space_dim(space, isl_dim_set);
+	if (n < n2)
+		isl_die(isl_ast_build_get_ctx(build), isl_error_internal,
+			"total input space dimension cannot be smaller "
+			"than dimension of innermost band",
+			space = isl_space_free(space));
+	space = isl_space_drop_dims(space, isl_dim_set, n - n2, n2);
+	space = isl_space_map_from_domain_and_range(space, space2);
+	space = isl_space_wrap(space);
+	space = isl_space_set_tuple_name(space, isl_dim_set, "isolate");
+	isolated = isl_union_set_extract_set(options, space);
+	isl_union_set_free(options);
+
 	isolated = isl_set_flatten(isolated);
 	isolated = isl_set_preimage_multi_aff(isolated,
 				    isl_multi_aff_copy(build->internal2input));
@@ -2438,4 +2550,21 @@ __isl_give isl_set *isl_ast_build_eliminate(
 	domain = isl_ast_build_eliminate_inner(build, domain);
 	domain = isl_ast_build_eliminate_divs(build, domain);
 	return domain;
+}
+
+/* Replace build->single_valued by "sv".
+ */
+__isl_give isl_ast_build *isl_ast_build_set_single_valued(
+	__isl_take isl_ast_build *build, int sv)
+{
+	if (!build)
+		return build;
+	if (build->single_valued == sv)
+		return build;
+	build = isl_ast_build_cow(build);
+	if (!build)
+		return build;
+	build->single_valued = sv;
+
+	return build;
 }

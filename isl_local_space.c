@@ -1,7 +1,6 @@
 /*
  * Copyright 2011      INRIA Saclay
  * Copyright 2012-2014 Ecole Normale Superieure
- * Copyright 2019      Cerebras Systems
  *
  * Use of this software is governed by the MIT license
  *
@@ -9,93 +8,68 @@
  * Parc Club Orsay Universite, ZAC des vignes, 4 rue Jacques Monod,
  * 91893 Orsay, France
  * and Ecole Normale Superieure, 45 rue d’Ulm, 75230 Paris, France
- * and Cerebras Systems, 175 S San Antonio Rd, Los Altos, CA, USA
  */
 
 #include <isl_ctx_private.h>
-#include <isl/id.h>
 #include <isl_map_private.h>
 #include <isl_local_space_private.h>
 #include <isl_space_private.h>
 #include <isl_mat_private.h>
 #include <isl_aff_private.h>
 #include <isl_vec_private.h>
-#include <isl_point_private.h>
 #include <isl_seq.h>
-#include <isl_local.h>
 
 isl_ctx *isl_local_space_get_ctx(__isl_keep isl_local_space *ls)
 {
 	return ls ? ls->dim->ctx : NULL;
 }
 
-/* Return a hash value that digests "ls".
- */
-uint32_t isl_local_space_get_hash(__isl_keep isl_local_space *ls)
-{
-	uint32_t hash, space_hash, div_hash;
-
-	if (!ls)
-		return 0;
-
-	hash = isl_hash_init();
-	space_hash = isl_space_get_full_hash(isl_local_space_peek_space(ls));
-	isl_hash_hash(hash, space_hash);
-	div_hash = isl_mat_get_hash(ls->div);
-	isl_hash_hash(hash, div_hash);
-
-	return hash;
-}
-
-__isl_give isl_local_space *isl_local_space_alloc_div(
-	__isl_take isl_space *space, __isl_take isl_mat *div)
+__isl_give isl_local_space *isl_local_space_alloc_div(__isl_take isl_space *dim,
+	__isl_take isl_mat *div)
 {
 	isl_ctx *ctx;
 	isl_local_space *ls = NULL;
 
-	if (!space || !div)
+	if (!dim || !div)
 		goto error;
 
-	ctx = isl_space_get_ctx(space);
+	ctx = isl_space_get_ctx(dim);
 	ls = isl_calloc_type(ctx, struct isl_local_space);
 	if (!ls)
 		goto error;
 
 	ls->ref = 1;
-	ls->dim = space;
+	ls->dim = dim;
 	ls->div = div;
 
 	return ls;
 error:
 	isl_mat_free(div);
-	isl_space_free(space);
+	isl_space_free(dim);
 	isl_local_space_free(ls);
 	return NULL;
 }
 
-__isl_give isl_local_space *isl_local_space_alloc(__isl_take isl_space *space,
+__isl_give isl_local_space *isl_local_space_alloc(__isl_take isl_space *dim,
 	unsigned n_div)
 {
 	isl_ctx *ctx;
 	isl_mat *div;
-	isl_size total;
+	unsigned total;
 
-	if (!space)
+	if (!dim)
 		return NULL;
 
-	total = isl_space_dim(space, isl_dim_all);
-	if (total < 0)
-		return isl_local_space_from_space(isl_space_free(space));
+	total = isl_space_dim(dim, isl_dim_all);
 
-	ctx = isl_space_get_ctx(space);
+	ctx = isl_space_get_ctx(dim);
 	div = isl_mat_alloc(ctx, n_div, 1 + 1 + total + n_div);
-	return isl_local_space_alloc_div(space, div);
+	return isl_local_space_alloc_div(dim, div);
 }
 
-__isl_give isl_local_space *isl_local_space_from_space(
-	__isl_take isl_space *space)
+__isl_give isl_local_space *isl_local_space_from_space(__isl_take isl_space *dim)
 {
-	return isl_local_space_alloc(space, 0);
+	return isl_local_space_alloc(dim, 0);
 }
 
 __isl_give isl_local_space *isl_local_space_copy(__isl_keep isl_local_space *ls)
@@ -161,28 +135,6 @@ isl_bool isl_local_space_is_set(__isl_keep isl_local_space *ls)
 	return ls ? isl_space_is_set(ls->dim) : isl_bool_error;
 }
 
-#undef TYPE
-#define TYPE	isl_local_space
-
-#include "isl_type_has_equal_space_bin_templ.c"
-#include "isl_type_has_space_templ.c"
-
-/* Check that the space of "ls" is equal to "space".
- */
-static isl_stat isl_local_space_check_has_space(__isl_keep isl_local_space *ls,
-	__isl_keep isl_space *space)
-{
-	isl_bool ok;
-
-	ok = isl_local_space_has_space(ls, space);
-	if (ok < 0)
-		return isl_stat_error;
-	if (!ok)
-		isl_die(isl_local_space_get_ctx(ls), isl_error_invalid,
-			"spaces don't match", return isl_stat_error);
-	return isl_stat_ok;
-}
-
 /* Return true if the two local spaces are identical, with identical
  * expressions for the integer divisions.
  */
@@ -191,7 +143,10 @@ isl_bool isl_local_space_is_equal(__isl_keep isl_local_space *ls1,
 {
 	isl_bool equal;
 
-	equal = isl_local_space_has_equal_space(ls1, ls2);
+	if (!ls1 || !ls2)
+		return isl_bool_error;
+
+	equal = isl_space_is_equal(ls1->dim, ls2->dim);
 	if (equal < 0 || !equal)
 		return equal;
 
@@ -207,11 +162,19 @@ isl_bool isl_local_space_is_equal(__isl_keep isl_local_space *ls1,
  *
  * Return -1 if "ls1" is "smaller" than "ls2", 1 if "ls1" is "greater"
  * than "ls2" and 0 if they are equal.
+ *
+ * The order is fairly arbitrary.  We do "prefer" divs that only involve
+ * earlier dimensions in the sense that we consider local spaces where
+ * the first differing div involves earlier dimensions to be smaller.
  */
 int isl_local_space_cmp(__isl_keep isl_local_space *ls1,
 	__isl_keep isl_local_space *ls2)
 {
+	int i;
 	int cmp;
+	int known1, known2;
+	int last1, last2;
+	int n_col;
 
 	if (ls1 == ls2)
 		return 0;
@@ -224,65 +187,58 @@ int isl_local_space_cmp(__isl_keep isl_local_space *ls1,
 	if (cmp != 0)
 		return cmp;
 
-	return isl_local_cmp(ls1->div, ls2->div);
-}
+	if (ls1->div->n_row != ls2->div->n_row)
+		return ls1->div->n_row - ls2->div->n_row;
 
-isl_size isl_local_space_dim(__isl_keep isl_local_space *ls,
-	enum isl_dim_type type)
-{
-	if (!ls)
-		return isl_size_error;
-	if (type == isl_dim_div)
-		return ls->div->n_row;
-	if (type == isl_dim_all) {
-		isl_size dim = isl_space_dim(ls->dim, isl_dim_all);
-		if (dim < 0)
-			return isl_size_error;
-		return dim + ls->div->n_row;
+	n_col = isl_mat_cols(ls1->div);
+	for (i = 0; i < ls1->div->n_row; ++i) {
+		known1 = isl_local_space_div_is_known(ls1, i);
+		known2 = isl_local_space_div_is_known(ls2, i);
+		if (!known1 && !known2)
+			continue;
+		if (!known1)
+			return 1;
+		if (!known2)
+			return -1;
+		last1 = isl_seq_last_non_zero(ls1->div->row[i] + 1, n_col - 1);
+		last2 = isl_seq_last_non_zero(ls2->div->row[i] + 1, n_col - 1);
+		if (last1 != last2)
+			return last1 - last2;
+		cmp = isl_seq_cmp(ls1->div->row[i], ls2->div->row[i], n_col);
+		if (cmp != 0)
+			return cmp;
 	}
-	return isl_space_dim(ls->dim, type);
+
+	return 0;
 }
 
-#undef TYPE
-#define TYPE	isl_local_space
-#include "check_type_range_templ.c"
-
-/* Return the position of the variables of the given type
- * within the sequence of variables of "ls".
- */
-isl_size isl_local_space_var_offset(__isl_keep isl_local_space *ls,
-	enum isl_dim_type type)
-{
-	isl_space *space;
-
-	space = isl_local_space_peek_space(ls);
-	switch (type) {
-	case isl_dim_param:
-	case isl_dim_in:
-	case isl_dim_out:	return isl_space_offset(space, type);
-	case isl_dim_div:	return isl_space_dim(space, isl_dim_all);
-	case isl_dim_cst:
-	default:
-		isl_die(isl_local_space_get_ctx(ls), isl_error_invalid,
-			"invalid dimension type", return isl_size_error);
-	}
-}
-
-/* Return the position of the coefficients of the variables of the given type
- * within the sequence of coefficients of "ls".
- */
-unsigned isl_local_space_offset(__isl_keep isl_local_space *ls,
+int isl_local_space_dim(__isl_keep isl_local_space *ls,
 	enum isl_dim_type type)
 {
 	if (!ls)
 		return 0;
+	if (type == isl_dim_div)
+		return ls->div->n_row;
+	if (type == isl_dim_all)
+		return isl_space_dim(ls->dim, isl_dim_all) + ls->div->n_row;
+	return isl_space_dim(ls->dim, type);
+}
 
+unsigned isl_local_space_offset(__isl_keep isl_local_space *ls,
+	enum isl_dim_type type)
+{
+	isl_space *dim;
+
+	if (!ls)
+		return 0;
+
+	dim = ls->dim;
 	switch (type) {
 	case isl_dim_cst:	return 0;
-	case isl_dim_param:
-	case isl_dim_in:
-	case isl_dim_out:
-	case isl_dim_div:	return 1 + isl_local_space_var_offset(ls, type);
+	case isl_dim_param:	return 1;
+	case isl_dim_in:	return 1 + dim->nparam;
+	case isl_dim_out:	return 1 + dim->nparam + dim->n_in;
+	case isl_dim_div:	return 1 + dim->nparam + dim->n_in + dim->n_out;
 	default:		return 0;
 	}
 }
@@ -327,65 +283,10 @@ __isl_give isl_id *isl_local_space_get_dim_id(__isl_keep isl_local_space *ls,
 	return ls ? isl_space_get_dim_id(ls->dim, type, pos) : NULL;
 }
 
-/* Return the argument of the integer division at position "pos" in "ls".
- * All local variables in "ls" are known to have a (complete) explicit
- * representation.
- */
-static __isl_give isl_aff *extract_div(__isl_keep isl_local_space *ls, int pos)
-{
-	isl_aff *aff;
-
-	aff = isl_aff_alloc(isl_local_space_copy(ls));
-	if (!aff)
-		return NULL;
-	isl_seq_cpy(aff->v->el, ls->div->row[pos], aff->v->size);
-	return aff;
-}
-
-/* Return the argument of the integer division at position "pos" in "ls".
- * The integer division at that position is known to have a complete
- * explicit representation, but some of the others do not.
- * Remove them first because the domain of an isl_aff
- * is not allowed to have unknown local variables.
- */
-static __isl_give isl_aff *drop_unknown_divs_and_extract_div(
-	__isl_keep isl_local_space *ls, int pos)
-{
-	int i;
-	isl_size n;
-	isl_bool unknown;
-	isl_aff *aff;
-
-	n = isl_local_space_dim(ls, isl_dim_div);
-	if (n < 0)
-		return NULL;
-	ls = isl_local_space_copy(ls);
-	for (i = n - 1; i >= 0; --i) {
-		unknown = isl_local_space_div_is_marked_unknown(ls, i);
-		if (unknown < 0)
-			ls = isl_local_space_free(ls);
-		else if (!unknown)
-			continue;
-		ls = isl_local_space_drop_dims(ls, isl_dim_div, i, 1);
-		if (pos > i)
-			--pos;
-	}
-	aff = extract_div(ls, pos);
-	isl_local_space_free(ls);
-	return aff;
-}
-
-/* Return the argument of the integer division at position "pos" in "ls".
- * The integer division is assumed to have a complete explicit
- * representation.  If some of the other integer divisions
- * do not have an explicit representation, then they need
- * to be removed first because the domain of an isl_aff
- * is not allowed to have unknown local variables.
- */
 __isl_give isl_aff *isl_local_space_get_div(__isl_keep isl_local_space *ls,
 	int pos)
 {
-	isl_bool known;
+	isl_aff *aff;
 
 	if (!ls)
 		return NULL;
@@ -394,156 +295,26 @@ __isl_give isl_aff *isl_local_space_get_div(__isl_keep isl_local_space *ls,
 		isl_die(isl_local_space_get_ctx(ls), isl_error_invalid,
 			"index out of bounds", return NULL);
 
-	known = isl_local_space_div_is_known(ls, pos);
-	if (known < 0)
-		return NULL;
-	if (!known)
+	if (isl_int_is_zero(ls->div->row[pos][0]))
 		isl_die(isl_local_space_get_ctx(ls), isl_error_invalid,
 			"expression of div unknown", return NULL);
 	if (!isl_local_space_is_set(ls))
 		isl_die(isl_local_space_get_ctx(ls), isl_error_invalid,
 			"cannot represent divs of map spaces", return NULL);
 
-	known = isl_local_space_divs_known(ls);
-	if (known < 0)
+	aff = isl_aff_alloc(isl_local_space_copy(ls));
+	if (!aff)
 		return NULL;
-	if (known)
-		return extract_div(ls, pos);
-	else
-		return drop_unknown_divs_and_extract_div(ls, pos);
-}
-
-/* Return the space of "ls".
- */
-__isl_keep isl_space *isl_local_space_peek_space(__isl_keep isl_local_space *ls)
-{
-	if (!ls)
-		return NULL;
-
-	return ls->dim;
+	isl_seq_cpy(aff->v->el, ls->div->row[pos], aff->v->size);
+	return aff;
 }
 
 __isl_give isl_space *isl_local_space_get_space(__isl_keep isl_local_space *ls)
 {
-	return isl_space_copy(isl_local_space_peek_space(ls));
-}
-
-/* Return the space of "ls".
- * This may be either a copy or the space itself
- * if there is only one reference to "ls".
- * This allows the space to be modified inplace
- * if both the local space and its space have only a single reference.
- * The caller is not allowed to modify "ls" between this call and
- * a subsequent call to isl_local_space_restore_space.
- * The only exception is that isl_local_space_free can be called instead.
- */
-__isl_give isl_space *isl_local_space_take_space(__isl_keep isl_local_space *ls)
-{
-	isl_space *space;
-
 	if (!ls)
 		return NULL;
-	if (ls->ref != 1)
-		return isl_local_space_get_space(ls);
-	space = ls->dim;
-	ls->dim = NULL;
-	return space;
-}
 
-/* Set the space of "ls" to "space", where the space of "ls" may be missing
- * due to a preceding call to isl_local_space_take_space.
- * However, in this case, "ls" only has a single reference and
- * then the call to isl_local_space_cow has no effect.
- */
-__isl_give isl_local_space *isl_local_space_restore_space(
-	__isl_take isl_local_space *ls, __isl_take isl_space *space)
-{
-	if (!ls || !space)
-		goto error;
-
-	if (ls->dim == space) {
-		isl_space_free(space);
-		return ls;
-	}
-
-	ls = isl_local_space_cow(ls);
-	if (!ls)
-		goto error;
-	isl_space_free(ls->dim);
-	ls->dim = space;
-
-	return ls;
-error:
-	isl_local_space_free(ls);
-	isl_space_free(space);
-	return NULL;
-}
-
-/* Return the local variables of "ls".
- */
-__isl_keep isl_local *isl_local_space_peek_local(__isl_keep isl_local_space *ls)
-{
-	return ls ? ls->div : NULL;
-}
-
-/* Return a copy of the local variables of "ls".
- */
-__isl_give isl_local *isl_local_space_get_local(__isl_keep isl_local_space *ls)
-{
-	return isl_local_copy(isl_local_space_peek_local(ls));
-}
-
-/* Return the local variables of "ls".
- * This may be either a copy or the local variables itself
- * if there is only one reference to "ls".
- * This allows the local variables to be modified inplace
- * if both the local space and its local variables have only a single reference.
- * The caller is not allowed to modify "ls" between this call and
- * the subsequent call to isl_local_space_restore_local.
- * The only exception is that isl_local_space_free can be called instead.
- */
-static __isl_give isl_local *isl_local_space_take_local(
-	__isl_keep isl_local_space *ls)
-{
-	isl_local *local;
-
-	if (!ls)
-		return NULL;
-	if (ls->ref != 1)
-		return isl_local_space_get_local(ls);
-	local = ls->div;
-	ls->div = NULL;
-	return local;
-}
-
-/* Set the local variables of "ls" to "local",
- * where the local variables of "ls" may be missing
- * due to a preceding call to isl_local_space_take_local.
- * However, in this case, "ls" only has a single reference and
- * then the call to isl_local_space_cow has no effect.
- */
-static __isl_give isl_local_space *isl_local_space_restore_local(
-	__isl_take isl_local_space *ls, __isl_take isl_local *local)
-{
-	if (!ls || !local)
-		goto error;
-
-	if (ls->div == local) {
-		isl_local_free(local);
-		return ls;
-	}
-
-	ls = isl_local_space_cow(ls);
-	if (!ls)
-		goto error;
-	isl_local_free(ls->div);
-	ls->div = local;
-
-	return ls;
-error:
-	isl_local_space_free(ls);
-	isl_local_free(local);
-	return NULL;
+	return isl_space_copy(ls->dim);
 }
 
 /* Replace the identifier of the tuple of type "type" by "id".
@@ -595,34 +366,56 @@ error:
 	return NULL;
 }
 
-/* Construct a zero-dimensional local space with the given parameter domain.
- */
-__isl_give isl_local_space *isl_local_space_set_from_params(
-	__isl_take isl_local_space *ls)
-{
-	isl_space *space;
-
-	space = isl_local_space_take_space(ls);
-	space = isl_space_set_from_params(space);
-	ls = isl_local_space_restore_space(ls, space);
-
-	return ls;
-}
-
 __isl_give isl_local_space *isl_local_space_reset_space(
-	__isl_take isl_local_space *ls, __isl_take isl_space *space)
+	__isl_take isl_local_space *ls, __isl_take isl_space *dim)
 {
 	ls = isl_local_space_cow(ls);
-	if (!ls || !space)
+	if (!ls || !dim)
 		goto error;
 
 	isl_space_free(ls->dim);
-	ls->dim = space;
+	ls->dim = dim;
 
 	return ls;
 error:
 	isl_local_space_free(ls);
-	isl_space_free(space);
+	isl_space_free(dim);
+	return NULL;
+}
+
+/* Reorder the columns of the given div definitions according to the
+ * given reordering.
+ * The order of the divs themselves is assumed not to change.
+ */
+static __isl_give isl_mat *reorder_divs(__isl_take isl_mat *div,
+	__isl_take isl_reordering *r)
+{
+	int i, j;
+	isl_mat *mat;
+	int extra;
+
+	if (!div || !r)
+		goto error;
+
+	extra = isl_space_dim(r->dim, isl_dim_all) + div->n_row - r->len;
+	mat = isl_mat_alloc(div->ctx, div->n_row, div->n_col + extra);
+	if (!mat)
+		goto error;
+
+	for (i = 0; i < div->n_row; ++i) {
+		isl_seq_cpy(mat->row[i], div->row[i], 2);
+		isl_seq_clr(mat->row[i] + 2, mat->n_col - 2);
+		for (j = 0; j < r->len; ++j)
+			isl_int_set(mat->row[i][2 + r->pos[j]],
+				    div->row[i][2 + j]);
+	}
+
+	isl_reordering_free(r);
+	isl_mat_free(div);
+	return mat;
+error:
+	isl_reordering_free(r);
+	isl_mat_free(div);
 	return NULL;
 }
 
@@ -633,16 +426,22 @@ error:
 __isl_give isl_local_space *isl_local_space_realign(
 	__isl_take isl_local_space *ls, __isl_take isl_reordering *r)
 {
-	isl_local *local;
+	ls = isl_local_space_cow(ls);
+	if (!ls || !r)
+		goto error;
 
-	local = isl_local_space_take_local(ls);
-	local = isl_local_reorder(local, isl_reordering_copy(r));
-	ls = isl_local_space_restore_local(ls, local);
+	ls->div = reorder_divs(ls->div, isl_reordering_copy(r));
+	if (!ls->div)
+		goto error;
 
-	ls = isl_local_space_reset_space(ls, isl_reordering_get_space(r));
+	ls = isl_local_space_reset_space(ls, isl_space_copy(r->dim));
 
 	isl_reordering_free(r);
 	return ls;
+error:
+	isl_local_space_free(ls);
+	isl_reordering_free(r);
+	return NULL;
 }
 
 __isl_give isl_local_space *isl_local_space_add_div(
@@ -763,7 +562,7 @@ __isl_give isl_basic_map *isl_basic_map_sort_divs(
 	__isl_take isl_basic_map *bmap)
 {
 	int i, j;
-	isl_size total;
+	unsigned total;
 
 	bmap = isl_basic_map_order_divs(bmap);
 	if (!bmap)
@@ -771,16 +570,12 @@ __isl_give isl_basic_map *isl_basic_map_sort_divs(
 	if (bmap->n_div <= 1)
 		return bmap;
 
-	total = isl_basic_map_dim(bmap, isl_dim_all);
-	if (total < 0)
-		return isl_basic_map_free(bmap);
+	total = 2 + isl_basic_map_total_dim(bmap);
 	for (i = 1; i < bmap->n_div; ++i) {
 		for (j = i - 1; j >= 0; --j) {
-			if (bmap_cmp_row(bmap, j, j + 1, 2 + total) <= 0)
+			if (bmap_cmp_row(bmap, j, j + 1, total) <= 0)
 				break;
-			bmap = isl_basic_map_swap_div(bmap, j, j + 1);
-			if (!bmap)
-				return NULL;
+			isl_basic_map_swap_div(bmap, j, j + 1);
 		}
 	}
 
@@ -880,8 +675,8 @@ __isl_give isl_local_space *isl_local_space_intersect(
 	isl_ctx *ctx;
 	int *exp1 = NULL;
 	int *exp2 = NULL;
-	isl_mat *div = NULL;
-	isl_bool equal;
+	isl_mat *div;
+	int equal;
 
 	if (!ls1 || !ls2)
 		goto error;
@@ -928,54 +723,42 @@ __isl_give isl_local_space *isl_local_space_intersect(
 error:
 	free(exp1);
 	free(exp2);
-	isl_mat_free(div);
 	isl_local_space_free(ls1);
 	isl_local_space_free(ls2);
 	return NULL;
 }
 
-/* Is the local variable "div" of "ls" marked as not having
- * an explicit representation?
- * Note that even if this variable is not marked in this way and therefore
- * does have an explicit representation, this representation may still
- * depend (indirectly) on other local variables that do not
- * have an explicit representation.
+/* Does "ls" have an explicit representation for div "div"?
  */
-isl_bool isl_local_space_div_is_marked_unknown(__isl_keep isl_local_space *ls,
-	int div)
+int isl_local_space_div_is_known(__isl_keep isl_local_space *ls, int div)
 {
 	if (!ls)
-		return isl_bool_error;
-	return isl_local_div_is_marked_unknown(ls->div, div);
+		return -1;
+	if (div < 0 || div >= ls->div->n_row)
+		isl_die(isl_local_space_get_ctx(ls), isl_error_invalid,
+			"position out of bounds", return -1);
+	return !isl_int_is_zero(ls->div->row[div][0]);
 }
 
-/* Does "ls" have a complete explicit representation for div "div"?
- */
-isl_bool isl_local_space_div_is_known(__isl_keep isl_local_space *ls, int div)
+int isl_local_space_divs_known(__isl_keep isl_local_space *ls)
 {
-	if (!ls)
-		return isl_bool_error;
-	return isl_local_div_is_known(ls->div, div);
-}
+	int i;
 
-/* Does "ls" have an explicit representation for all local variables?
- */
-isl_bool isl_local_space_divs_known(__isl_keep isl_local_space *ls)
-{
 	if (!ls)
-		return isl_bool_error;
-	return isl_local_divs_known(ls->div);
+		return -1;
+
+	for (i = 0; i < ls->div->n_row; ++i)
+		if (isl_int_is_zero(ls->div->row[i][0]))
+			return 0;
+
+	return 1;
 }
 
 __isl_give isl_local_space *isl_local_space_domain(
 	__isl_take isl_local_space *ls)
 {
-	isl_size n_out;
-
-	n_out = isl_local_space_dim(ls, isl_dim_out);
-	if (n_out < 0)
-		return isl_local_space_free(ls);
-	ls = isl_local_space_drop_dims(ls, isl_dim_out, 0, n_out);
+	ls = isl_local_space_drop_dims(ls, isl_dim_out,
+					0, isl_local_space_dim(ls, isl_dim_out));
 	ls = isl_local_space_cow(ls);
 	if (!ls)
 		return NULL;
@@ -988,12 +771,8 @@ __isl_give isl_local_space *isl_local_space_domain(
 __isl_give isl_local_space *isl_local_space_range(
 	__isl_take isl_local_space *ls)
 {
-	isl_size n_in;
-
-	n_in = isl_local_space_dim(ls, isl_dim_in);
-	if (n_in < 0)
-		return isl_local_space_free(ls);
-	ls = isl_local_space_drop_dims(ls, isl_dim_in, 0, n_in);
+	ls = isl_local_space_drop_dims(ls, isl_dim_in,
+					0, isl_local_space_dim(ls, isl_dim_in));
 	ls = isl_local_space_cow(ls);
 	if (!ls)
 		return NULL;
@@ -1022,86 +801,17 @@ __isl_give isl_local_space *isl_local_space_from_domain(
 __isl_give isl_local_space *isl_local_space_add_dims(
 	__isl_take isl_local_space *ls, enum isl_dim_type type, unsigned n)
 {
-	isl_size pos;
+	int pos;
 
+	if (!ls)
+		return NULL;
 	pos = isl_local_space_dim(ls, type);
-	if (pos < 0)
-		return isl_local_space_free(ls);
 	return isl_local_space_insert_dims(ls, type, pos, n);
-}
-
-/* Lift the basic set "bset", living in the space of "ls"
- * to live in a space with extra coordinates corresponding
- * to the local variables of "ls".
- */
-__isl_give isl_basic_set *isl_local_space_lift_basic_set(
-	__isl_take isl_local_space *ls, __isl_take isl_basic_set *bset)
-{
-	isl_size n_local;
-	isl_space *space;
-	isl_basic_set *ls_bset;
-
-	n_local = isl_local_space_dim(ls, isl_dim_div);
-	space = isl_basic_set_peek_space(bset);
-	if (n_local < 0 ||
-	    isl_local_space_check_has_space(ls, space) < 0)
-		goto error;
-
-	if (n_local == 0) {
-		isl_local_space_free(ls);
-		return bset;
-	}
-
-	bset = isl_basic_set_add_dims(bset, isl_dim_set, n_local);
-	ls_bset = isl_basic_set_from_local_space(ls);
-	ls_bset = isl_basic_set_lift(ls_bset);
-	ls_bset = isl_basic_set_flatten(ls_bset);
-	bset = isl_basic_set_intersect(bset, ls_bset);
-
-	return bset;
-error:
-	isl_local_space_free(ls);
-	isl_basic_set_free(bset);
-	return NULL;
-}
-
-/* Lift the set "set", living in the space of "ls"
- * to live in a space with extra coordinates corresponding
- * to the local variables of "ls".
- */
-__isl_give isl_set *isl_local_space_lift_set(__isl_take isl_local_space *ls,
-	__isl_take isl_set *set)
-{
-	isl_size n_local;
-	isl_basic_set *bset;
-
-	n_local = isl_local_space_dim(ls, isl_dim_div);
-	if (n_local < 0 ||
-	    isl_local_space_check_has_space(ls, isl_set_peek_space(set)) < 0)
-		goto error;
-
-	if (n_local == 0) {
-		isl_local_space_free(ls);
-		return set;
-	}
-
-	set = isl_set_add_dims(set, isl_dim_set, n_local);
-	bset = isl_basic_set_from_local_space(ls);
-	bset = isl_basic_set_lift(bset);
-	bset = isl_basic_set_flatten(bset);
-	set = isl_set_intersect(set, isl_set_from_basic_set(bset));
-
-	return set;
-error:
-	isl_local_space_free(ls);
-	isl_set_free(set);
-	return NULL;
 }
 
 /* Remove common factor of non-constant terms and denominator.
  */
-static __isl_give isl_local_space *normalize_div(
-	__isl_take isl_local_space *ls, int div)
+static void normalize_div(__isl_keep isl_local_space *ls, int div)
 {
 	isl_ctx *ctx = ls->div->ctx;
 	unsigned total = ls->div->n_col - 2;
@@ -1110,7 +820,7 @@ static __isl_give isl_local_space *normalize_div(
 	isl_int_gcd(ctx->normalize_gcd,
 		    ctx->normalize_gcd, ls->div->row[div][0]);
 	if (isl_int_is_one(ctx->normalize_gcd))
-		return ls;
+		return;
 
 	isl_seq_scale_down(ls->div->row[div] + 2, ls->div->row[div] + 2,
 			    ctx->normalize_gcd, total);
@@ -1118,8 +828,6 @@ static __isl_give isl_local_space *normalize_div(
 			    ctx->normalize_gcd);
 	isl_int_fdiv_q(ls->div->row[div][1], ls->div->row[div][1],
 			    ctx->normalize_gcd);
-
-	return ls;
 }
 
 /* Exploit the equalities in "eq" to simplify the expressions of
@@ -1131,17 +839,14 @@ __isl_give isl_local_space *isl_local_space_substitute_equalities(
 	__isl_take isl_local_space *ls, __isl_take isl_basic_set *eq)
 {
 	int i, j, k;
-	isl_size total, dim;
+	unsigned total;
 	unsigned n_div;
 
 	if (!ls || !eq)
 		goto error;
 
 	total = isl_space_dim(eq->dim, isl_dim_all);
-	dim = isl_local_space_dim(ls, isl_dim_all);
-	if (dim < 0 || total < 0)
-		goto error;
-	if (dim != total)
+	if (isl_local_space_dim(ls, isl_dim_all) != total)
 		isl_die(isl_local_space_get_ctx(ls), isl_error_invalid,
 			"spaces don't match", goto error);
 	total++;
@@ -1162,9 +867,7 @@ __isl_give isl_local_space *isl_local_space_substitute_equalities(
 				goto error;
 			isl_seq_elim(ls->div->row[k] + 1, eq->eq[i], j, total,
 					&ls->div->row[k][0]);
-			ls = normalize_div(ls, k);
-			if (!ls)
-				goto error;
+			normalize_div(ls, k);
 		}
 	}
 
@@ -1221,9 +924,7 @@ __isl_give isl_local_space *isl_local_space_substitute_seq(
 			continue;
 		isl_seq_substitute(ls->div->row[i], pos, subs,
 			ls->div->n_col, subs_len, v);
-		ls = normalize_div(ls, i);
-		if (!ls)
-			break;
+		normalize_div(ls, i);
 	}
 	isl_int_clear(v);
 
@@ -1249,8 +950,6 @@ __isl_give isl_local_space *isl_local_space_substitute(
 	__isl_take isl_local_space *ls,
 	enum isl_dim_type type, unsigned pos, __isl_keep isl_aff *subs)
 {
-	isl_size n_div;
-
 	ls = isl_local_space_cow(ls);
 	if (!ls || !subs)
 		return isl_local_space_free(ls);
@@ -1258,10 +957,7 @@ __isl_give isl_local_space *isl_local_space_substitute(
 	if (!isl_space_is_equal(ls->dim, subs->ls->dim))
 		isl_die(isl_local_space_get_ctx(ls), isl_error_invalid,
 			"spaces don't match", return isl_local_space_free(ls));
-	n_div = isl_local_space_dim(subs->ls, isl_dim_div);
-	if (n_div < 0)
-		return isl_local_space_free(ls);
-	if (n_div != 0)
+	if (isl_local_space_dim(subs->ls, isl_dim_div) != 0)
 		isl_die(isl_local_space_get_ctx(ls), isl_error_unsupported,
 			"cannot handle divs yet",
 			return isl_local_space_free(ls));
@@ -1270,11 +966,11 @@ __isl_give isl_local_space *isl_local_space_substitute(
 					    subs->v->size, 0, ls->div->n_row);
 }
 
-isl_bool isl_local_space_is_named_or_nested(__isl_keep isl_local_space *ls,
+int isl_local_space_is_named_or_nested(__isl_keep isl_local_space *ls,
 	enum isl_dim_type type)
 {
 	if (!ls)
-		return isl_bool_error;
+		return -1;
 	return isl_space_is_named_or_nested(ls->dim, type);
 }
 
@@ -1282,13 +978,17 @@ __isl_give isl_local_space *isl_local_space_drop_dims(
 	__isl_take isl_local_space *ls,
 	enum isl_dim_type type, unsigned first, unsigned n)
 {
+	isl_ctx *ctx;
+
 	if (!ls)
 		return NULL;
 	if (n == 0 && !isl_local_space_is_named_or_nested(ls, type))
 		return ls;
 
-	if (isl_local_space_check_range(ls, type, first, n) < 0)
-		return isl_local_space_free(ls);
+	ctx = isl_local_space_get_ctx(ls);
+	if (first + n > isl_local_space_dim(ls, type))
+		isl_die(ctx, isl_error_invalid, "range out of bounds",
+			return isl_local_space_free(ls));
 
 	ls = isl_local_space_cow(ls);
 	if (!ls)
@@ -1314,13 +1014,17 @@ __isl_give isl_local_space *isl_local_space_insert_dims(
 	__isl_take isl_local_space *ls,
 	enum isl_dim_type type, unsigned first, unsigned n)
 {
+	isl_ctx *ctx;
+
 	if (!ls)
 		return NULL;
 	if (n == 0 && !isl_local_space_is_named_or_nested(ls, type))
 		return ls;
 
-	if (isl_local_space_check_range(ls, type, first, 0) < 0)
-		return isl_local_space_free(ls);
+	ctx = isl_local_space_get_ctx(ls);
+	if (first > isl_local_space_dim(ls, type))
+		isl_die(ctx, isl_error_invalid, "position out of bounds",
+			return isl_local_space_free(ls));
 
 	ls = isl_local_space_cow(ls);
 	if (!ls)
@@ -1342,48 +1046,6 @@ __isl_give isl_local_space *isl_local_space_insert_dims(
 	return ls;
 }
 
-/* Does the linear part of "constraint" correspond to
- * integer division "div" in "ls"?
- *
- * That is, given div = floor((c + f)/m), is the constraint of the form
- *
- *		f - m d + c' >= 0		[sign = 1]
- * or
- *		-f + m d + c'' >= 0		[sign = -1]
- * ?
- * If so, set *sign to the corresponding value.
- */
-static isl_bool is_linear_div_constraint(__isl_keep isl_local_space *ls,
-	isl_int *constraint, unsigned div, int *sign)
-{
-	isl_bool unknown;
-	unsigned pos;
-
-	unknown = isl_local_space_div_is_marked_unknown(ls, div);
-	if (unknown < 0)
-		return isl_bool_error;
-	if (unknown)
-		return isl_bool_false;
-
-	pos = isl_local_space_offset(ls, isl_dim_div) + div;
-
-	if (isl_int_eq(constraint[pos], ls->div->row[div][0])) {
-		*sign = -1;
-		if (!isl_seq_is_neg(constraint + 1,
-				    ls->div->row[div] + 2, pos - 1))
-			return isl_bool_false;
-	} else if (isl_int_abs_eq(constraint[pos], ls->div->row[div][0])) {
-		*sign = 1;
-		if (!isl_seq_eq(constraint + 1, ls->div->row[div] + 2, pos - 1))
-			return isl_bool_false;
-	} else {
-		return isl_bool_false;
-	}
-	if (isl_seq_any_non_zero(constraint + pos + 1, ls->div->n_row - div - 1))
-		return isl_bool_false;
-	return isl_bool_true;
-}
-
 /* Check if the constraints pointed to by "constraint" is a div
  * constraint corresponding to div "div" in "ls".
  *
@@ -1392,84 +1054,60 @@ static isl_bool is_linear_div_constraint(__isl_keep isl_local_space *ls,
  *		f - m d >= 0
  * or
  *		-(f-(m-1)) + m d >= 0
- *
- * First check if the linear part is of the right form and
- * then check the constant term.
  */
-isl_bool isl_local_space_is_div_constraint(__isl_keep isl_local_space *ls,
+int isl_local_space_is_div_constraint(__isl_keep isl_local_space *ls,
 	isl_int *constraint, unsigned div)
 {
-	int sign;
-	isl_bool linear;
+	unsigned pos;
 
-	linear = is_linear_div_constraint(ls, constraint, div, &sign);
-	if (linear < 0 || !linear)
-		return linear;
+	if (!ls)
+		return -1;
 
-	if (sign < 0) {
+	if (isl_int_is_zero(ls->div->row[div][0]))
+		return 0;
+
+	pos = isl_local_space_offset(ls, isl_dim_div) + div;
+
+	if (isl_int_eq(constraint[pos], ls->div->row[div][0])) {
 		int neg;
 		isl_int_sub(ls->div->row[div][1],
 				ls->div->row[div][1], ls->div->row[div][0]);
 		isl_int_add_ui(ls->div->row[div][1], ls->div->row[div][1], 1);
-		neg = isl_seq_is_neg(constraint, ls->div->row[div] + 1, 1);
+		neg = isl_seq_is_neg(constraint, ls->div->row[div]+1, pos);
 		isl_int_sub_ui(ls->div->row[div][1], ls->div->row[div][1], 1);
 		isl_int_add(ls->div->row[div][1],
 				ls->div->row[div][1], ls->div->row[div][0]);
 		if (!neg)
-			return isl_bool_false;
-	} else {
-		if (!isl_int_eq(constraint[0], ls->div->row[div][1]))
-			return isl_bool_false;
-	}
+			return 0;
+		if (isl_seq_first_non_zero(constraint+pos+1,
+					    ls->div->n_row-div-1) != -1)
+			return 0;
+	} else if (isl_int_abs_eq(constraint[pos], ls->div->row[div][0])) {
+		if (!isl_seq_eq(constraint, ls->div->row[div]+1, pos))
+			return 0;
+		if (isl_seq_first_non_zero(constraint+pos+1,
+					    ls->div->n_row-div-1) != -1)
+			return 0;
+	} else
+		return 0;
 
-	return isl_bool_true;
+	return 1;
 }
 
-/* Is the constraint pointed to by "constraint" one
- * of an equality that corresponds to integer division "div" in "ls"?
- *
- * That is, given an integer division of the form
- *
- *	a = floor((f + c)/m)
- *
- * is the equality of the form
- *
- *		-f + m d + c' = 0
- * ?
- * Note that the constant term is not checked explicitly, but given
- * that this is a valid equality constraint, the constant c' necessarily
- * has a value close to -c.
- */
-isl_bool isl_local_space_is_div_equality(__isl_keep isl_local_space *ls,
-	isl_int *constraint, unsigned div)
-{
-	int sign;
-	isl_bool linear;
-
-	linear = is_linear_div_constraint(ls, constraint, div, &sign);
-	if (linear < 0 || !linear)
-		return linear;
-
-	return isl_bool_ok(sign < 0);
-}
-
-/* Return an array of integers, one for each variable of "ls",
- * with entry i set to 1 if the variable at position i is involved
- * in the linear expression "l".  This includes variables that appear
- * in the definition of local variables that appear in "l".
+/*
+ * Set active[i] to 1 if the dimension at position i is involved
+ * in the linear expression l.
  */
 int *isl_local_space_get_active(__isl_keep isl_local_space *ls, isl_int *l)
 {
 	int i, j;
 	isl_ctx *ctx;
 	int *active = NULL;
-	isl_size total;
+	unsigned total;
 	unsigned offset;
 
 	ctx = isl_local_space_get_ctx(ls);
 	total = isl_local_space_dim(ls, isl_dim_all);
-	if (total < 0)
-		return NULL;
 	active = isl_calloc_array(ctx, int, total);
 	if (total && !active)
 		return NULL;
@@ -1559,7 +1197,7 @@ __isl_give isl_local_space *isl_local_space_preimage_multi_aff(
 	int i;
 	isl_space *space;
 	isl_local_space *res = NULL;
-	isl_size n_div_ls, n_div_ma;
+	int n_div_ls, n_div_ma;
 	isl_int f, c1, c2, g;
 
 	ma = isl_multi_aff_align_divs(ma);
@@ -1570,9 +1208,7 @@ __isl_give isl_local_space *isl_local_space_preimage_multi_aff(
 			"spaces don't match", goto error);
 
 	n_div_ls = isl_local_space_dim(ls, isl_dim_div);
-	n_div_ma = ma->n ? isl_aff_dim(ma->u.p[0], isl_dim_div) : 0;
-	if (n_div_ls < 0 || n_div_ma < 0)
-		goto error;
+	n_div_ma = ma->n ? isl_aff_dim(ma->p[0], isl_dim_div) : 0;
 
 	space = isl_space_domain(isl_multi_aff_get_space(ma));
 	res = isl_local_space_alloc(space, n_div_ma + n_div_ls);
@@ -1581,7 +1217,7 @@ __isl_give isl_local_space *isl_local_space_preimage_multi_aff(
 
 	if (n_div_ma) {
 		isl_mat_free(res->div);
-		res->div = isl_mat_copy(ma->u.p[0]->ls->div);
+		res->div = isl_mat_copy(ma->p[0]->ls->div);
 		res->div = isl_mat_add_zero_cols(res->div, n_div_ls);
 		res->div = isl_mat_add_rows(res->div, n_div_ls);
 		if (!res->div)
@@ -1598,13 +1234,9 @@ __isl_give isl_local_space *isl_local_space_preimage_multi_aff(
 			isl_int_set_si(res->div->row[n_div_ma + i][0], 0);
 			continue;
 		}
-		if (isl_seq_preimage(res->div->row[n_div_ma + i],
-			    ls->div->row[i],
-			    ma, 0, 0, n_div_ma, n_div_ls, f, c1, c2, g, 1) < 0)
-			res = isl_local_space_free(res);
-		res = normalize_div(res, n_div_ma + i);
-		if (!res)
-			break;
+		isl_seq_preimage(res->div->row[n_div_ma + i], ls->div->row[i],
+				ma, 0, 0, n_div_ma, n_div_ls, f, c1, c2, g, 1);
+		normalize_div(res, n_div_ma + i);
 	}
 
 	isl_int_clear(f);
@@ -1633,9 +1265,6 @@ __isl_give isl_local_space *isl_local_space_move_dims(
 	enum isl_dim_type dst_type, unsigned dst_pos,
 	enum isl_dim_type src_type, unsigned src_pos, unsigned n)
 {
-	isl_space *space;
-	isl_local *local;
-	isl_size v_src, v_dst;
 	unsigned g_dst_pos;
 	unsigned g_src_pos;
 
@@ -1646,10 +1275,13 @@ __isl_give isl_local_space *isl_local_space_move_dims(
 	    !isl_local_space_is_named_or_nested(ls, dst_type))
 		return ls;
 
-	if (isl_local_space_check_range(ls, src_type, src_pos, n) < 0)
-		return isl_local_space_free(ls);
-	if (isl_local_space_check_range(ls, dst_type, dst_pos, 0) < 0)
-		return isl_local_space_free(ls);
+	if (src_pos + n > isl_local_space_dim(ls, src_type))
+		isl_die(isl_local_space_get_ctx(ls), isl_error_invalid,
+			"range out of bounds", return isl_local_space_free(ls));
+	if (dst_pos > isl_local_space_dim(ls, dst_type))
+		isl_die(isl_local_space_get_ctx(ls), isl_error_invalid,
+			"position out of bounds",
+			return isl_local_space_free(ls));
 	if (src_type == isl_dim_div)
 		isl_die(isl_local_space_get_ctx(ls), isl_error_invalid,
 			"cannot move divs", return isl_local_space_free(ls));
@@ -1663,52 +1295,21 @@ __isl_give isl_local_space *isl_local_space_move_dims(
 			"moving dims within the same type not supported",
 			return isl_local_space_free(ls));
 
-	v_src = isl_local_space_var_offset(ls, src_type);
-	v_dst = isl_local_space_var_offset(ls, dst_type);
-	if (v_src < 0 || v_dst < 0)
-		return isl_local_space_free(ls);
-	g_src_pos = v_src + src_pos;
-	g_dst_pos = v_dst + dst_pos;
+	ls = isl_local_space_cow(ls);
+	if (!ls)
+		return NULL;
+
+	g_src_pos = 1 + isl_local_space_offset(ls, src_type) + src_pos;
+	g_dst_pos = 1 + isl_local_space_offset(ls, dst_type) + dst_pos;
 	if (dst_type > src_type)
 		g_dst_pos -= n;
-
-	local = isl_local_space_take_local(ls);
-	local = isl_local_move_vars(local, g_dst_pos, g_src_pos, n);
-	ls = isl_local_space_restore_local(ls, local);
-
-	space = isl_local_space_take_space(ls);
-	space = isl_space_move_dims(space, dst_type, dst_pos,
-					src_type, src_pos, n);
-	ls = isl_local_space_restore_space(ls, space);
-
-	return ls;
-}
-
-/* Given a local space (A -> B), return the corresponding local space
- * (B -> A).
- */
-__isl_give isl_local_space *isl_local_space_wrapped_reverse(
-	__isl_take isl_local_space *ls)
-{
-	isl_space *space;
-	isl_local *local;
-	isl_size n_in, n_out;
-	unsigned offset;
-
-	space = isl_local_space_peek_space(ls);
-	offset = isl_space_offset(space, isl_dim_set);
-	n_in = isl_space_wrapped_dim(space, isl_dim_set, isl_dim_in);
-	n_out = isl_space_wrapped_dim(space, isl_dim_set, isl_dim_out);
-	if (offset < 0 || n_in < 0 || n_out < 0)
+	ls->div = isl_mat_move_cols(ls->div, g_dst_pos, g_src_pos, n);
+	if (!ls->div)
 		return isl_local_space_free(ls);
-
-	space = isl_local_space_take_space(ls);
-	space = isl_space_wrapped_reverse(space);
-	ls = isl_local_space_restore_space(ls, space);
-
-	local = isl_local_space_take_local(ls);
-	local = isl_local_move_vars(local, offset, offset + n_in, n_out);
-	ls = isl_local_space_restore_local(ls, local);
+	ls->dim = isl_space_move_dims(ls->dim, dst_type, dst_pos,
+					src_type, src_pos, n);
+	if (!ls->dim)
+		return isl_local_space_free(ls);
 
 	return ls;
 }
@@ -1776,58 +1377,4 @@ __isl_give isl_local_space *isl_local_space_wrap(__isl_take isl_local_space *ls)
 		return isl_local_space_free(ls);
 
 	return ls;
-}
-
-/* Lift the point "pnt", living in the (set) space of "ls"
- * to live in a space with extra coordinates corresponding
- * to the local variables of "ls".
- */
-__isl_give isl_point *isl_local_space_lift_point(__isl_take isl_local_space *ls,
-	__isl_take isl_point *pnt)
-{
-	isl_size n_local;
-	isl_space *space;
-	isl_local *local;
-	isl_vec *vec;
-
-	if (isl_local_space_check_has_space(ls, isl_point_peek_space(pnt)) < 0)
-		goto error;
-
-	local = isl_local_space_peek_local(ls);
-	n_local = isl_local_space_dim(ls, isl_dim_div);
-	if (n_local < 0)
-		goto error;
-
-	space = isl_point_take_space(pnt);
-	vec = isl_point_take_vec(pnt);
-
-	space = isl_space_lift(space, n_local);
-	vec = isl_local_extend_point_vec(local, vec);
-
-	pnt = isl_point_restore_vec(pnt, vec);
-	pnt = isl_point_restore_space(pnt, space);
-
-	isl_local_space_free(ls);
-
-	return pnt;
-error:
-	isl_local_space_free(ls);
-	isl_point_free(pnt);
-	return NULL;
-}
-
-/* Do any of the local variables in "ls" depend on the specified dimensions?
- */
-isl_bool isl_local_space_involves_dims(__isl_keep isl_local_space *ls,
-	enum isl_dim_type type, unsigned first, unsigned n)
-{
-	isl_local *local;
-	isl_size off;
-
-	off = isl_local_space_var_offset(ls, type);
-	if (off < 0 || isl_local_space_check_range(ls, type, first, n) < 0)
-		return isl_bool_error;
-
-	local = isl_local_space_peek_local(ls);
-	return isl_local_involves_vars(local, off + first, n);
 }
